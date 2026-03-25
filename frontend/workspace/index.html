@@ -9,11 +9,33 @@
     <link rel="stylesheet" href="/workspace/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        html.auth-pending body {
+            visibility: hidden;
+            opacity: 0;
+        }
+    </style>
     <script>
-        // Apply saved theme immediately to prevent flash
+        // Apply saved theme and guard auth before rendering protected UI.
         (function() {
-            const t = localStorage.getItem('theme');
-            if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+            document.documentElement.classList.add('auth-pending');
+            try {
+                const t = localStorage.getItem('theme');
+                if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                    localStorage.setItem('auth_return_to', returnTo);
+                    window.location.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+                    return;
+                }
+            } catch {
+                const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                window.location.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+                return;
+            }
+            document.documentElement.classList.remove('auth-pending');
         })();
     </script>
     <!-- Load Chart.js BEFORE Monaco to avoid AMD conflict -->
@@ -214,6 +236,29 @@
                 </div>
             </div>
 
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+                <div class="stat-card p-5">
+                    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Today Executions</div>
+                    <div id="overviewTodayExecutions" class="text-2xl font-bold text-white">0</div>
+                    <div class="text-xs text-gray-500 mt-1">Last 24h execution attempts</div>
+                </div>
+                <div class="stat-card p-5">
+                    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Today Success Rate</div>
+                    <div id="overviewTodaySuccessRate" class="text-2xl font-bold text-emerald-400">0%</div>
+                    <div class="text-xs text-gray-500 mt-1">Success ratio in last 24h</div>
+                </div>
+                <div class="stat-card p-5">
+                    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Blocked / Invalid</div>
+                    <div id="overviewBlockedAttempts" class="text-2xl font-bold text-rose-400">0</div>
+                    <div class="text-xs text-gray-500 mt-1">Total blocked access attempts</div>
+                </div>
+                <div class="stat-card p-5">
+                    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Unique Client IPs</div>
+                    <div id="overviewUniqueIps" class="text-2xl font-bold text-cyan-400">0</div>
+                    <div class="text-xs text-gray-500 mt-1">Distinct IPs in execution logs</div>
+                </div>
+            </div>
+
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
                 <!-- Execution Summary -->
                 <div class="stat-card p-6">
@@ -263,6 +308,27 @@
                     </div>
                     <div id="recentExecutions" class="space-y-3 max-h-48 overflow-y-auto">
                         <div class="text-center text-gray-500 text-sm py-8">No executions yet</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+                <div class="stat-card p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-white">Execution Trend</h3>
+                        <span class="text-xs text-gray-500">Last 7 days</span>
+                    </div>
+                    <div class="h-64">
+                        <canvas id="executionTrendChart"></canvas>
+                    </div>
+                </div>
+                <div class="stat-card p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-white">Event Breakdown</h3>
+                        <span class="text-xs text-gray-500">Top actions by count</span>
+                    </div>
+                    <div class="h-64">
+                        <canvas id="eventBreakdownChart"></canvas>
                     </div>
                 </div>
             </div>
@@ -368,11 +434,11 @@
                             <i data-lucide="align-left" class="w-3.5 h-3.5"></i>
                             <span class="hidden sm:inline">Format</span>
                         </button>
-                        <button onclick="saveCurrentFile()"
+                        <button id="primarySaveButton" onclick="savePrimaryAction()"
                             class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-xs font-medium transition-colors"
-                            title="Save (Ctrl+S)">
+                            title="Save current file (Ctrl+S)">
                             <i data-lucide="save" class="w-3.5 h-3.5"></i>
-                            <span class="hidden sm:inline">Save</span>
+                            <span id="primarySaveButtonLabel" class="hidden sm:inline">Save</span>
                         </button>
                     </div>
                 </div>
@@ -1528,7 +1594,7 @@
             </h3>
             <div class="space-y-3">
                 <div class="flex justify-between items-center py-2 border-b border-[#27272a]">
-                    <span class="text-gray-400">Save current file</span>
+                    <span class="text-gray-400">Smart save (current/all modified)</span>
                     <kbd class="px-2 py-1 bg-[#27272a] rounded text-xs text-gray-300">Ctrl + S</kbd>
                 </div>
                 <div class="flex justify-between items-center py-2 border-b border-[#27272a]">
@@ -1619,6 +1685,7 @@
 
     <!-- PIN Verification Modal -->
     <div id="pinVerifyModal" class="fixed inset-0 bg-black/90 backdrop-blur-md items-center justify-center z-[100]"
+        data-lock-backdrop="true"
         style="display: none;">
         <div class="modal-content p-8 w-96 text-center">
             <div class="flex justify-center mb-6">

@@ -312,7 +312,29 @@ const workspaceIdentifier = pathParts[1]; // workspace ID
 const initialView = pathParts[2] || 'projects'; // default to projects
 const initialProjectId = pathParts[3] || null; // project ID for deep linking to editor
 const token = localStorage.getItem('token');
-if (!token) window.location.href = '/login';
+const AUTH_RETURN_TO_KEY = 'auth_return_to';
+
+function sanitizeReturnToPath(path) {
+    if (!path) return '';
+    const value = String(path).trim();
+    if (!value || !value.startsWith('/') || value.startsWith('//')) return '';
+    if (value.startsWith('/login') || value.startsWith('/register')) return '';
+    return value;
+}
+
+function getCurrentReturnToPath() {
+    return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
+
+function redirectToLoginWithReturnTo(returnToPath = getCurrentReturnToPath()) {
+    const safeReturnTo = sanitizeReturnToPath(returnToPath) || '/dashboard';
+    try {
+        localStorage.setItem(AUTH_RETURN_TO_KEY, safeReturnTo);
+    } catch {}
+    window.location.replace(`/login?returnTo=${encodeURIComponent(safeReturnTo)}`);
+}
+
+if (!token) redirectToLoginWithReturnTo();
 
 // Valid views for URL routing
 const validViews = ['overview', 'projects', 'editor', 'licenses', 'access', 'logs', 'team', 'settings'];
@@ -326,6 +348,8 @@ let logs = [];
 let teamData = { owner: null, members: [], invitations: [], currentUserRole: 'viewer' };
 let workspaceData = {};
 let executionChart = null;
+let executionTrendChart = null;
+let eventBreakdownChart = null;
 
 // === File Explorer State ===
 let projectFiles = [];        // Flat array of project_files for current project
@@ -339,8 +363,6 @@ let draggedFileId = null;      // Currently dragged file ID
 let selectedFileIds = new Set(); // Multi-select: set of selected file IDs
 let lastClickedFileId = null;  // For shift+click range selection
 let closedTabHistory = [];     // Recently closed tabs (for reopen)
-let autoSaveTimers = new Map(); // fileId -> timeout id
-let autoSaveInFlight = new Set(); // fileId currently autosaving
 let lastSavedContent = new Map(); // fileId -> latest saved content
 let currentUserRole = 'viewer'; // Current user's role in this workspace
 let isLoadingWorkspace = false; // Lock to prevent multiple simultaneous loads
@@ -360,7 +382,6 @@ const PANEL_STATE_KEYS = {
     detailsWidth: `workspace:${workspaceIdentifier}:detailsPanelWidth`
 };
 const TAB_HISTORY_LIMIT = 20;
-const AUTOSAVE_DELAY_MS = 1500;
 
 function setWorkspaceNetworkBanner(visible, message) {
     const banner = document.getElementById('networkStatusBanner');
@@ -462,8 +483,8 @@ function handleAuthError() {
     }
     keysToRemove.forEach(key => localStorage.removeItem(key));
 
-    // Redirect to login
-    window.location.href = '/login';
+    // Redirect to login and preserve current deep link.
+    redirectToLoginWithReturnTo();
 }
 
 // Debounce/throttle helpers to prevent duplicate requests
@@ -515,6 +536,23 @@ function hasUnsavedTabs() {
     return openTabs.some((tab) => Boolean(tab.modified));
 }
 
+function getDirtyTabCount() {
+    return openTabs.reduce((count, tab) => count + (tab.modified ? 1 : 0), 0);
+}
+
+function updatePrimarySaveButton() {
+    const button = document.getElementById('primarySaveButton');
+    const label = document.getElementById('primarySaveButtonLabel');
+    if (!button || !label) return;
+
+    const dirtyCount = getDirtyTabCount();
+    const shouldSaveAll = dirtyCount > 1;
+    label.textContent = shouldSaveAll ? `Save All (${dirtyCount})` : 'Save';
+    button.title = shouldSaveAll
+        ? 'Save all modified files (Ctrl+S)'
+        : 'Save current file (Ctrl+S)';
+}
+
 function updateTreeModifiedIndicator(fileId, modified) {
     const normalized = normalizeFileId(fileId);
     const treeNode = document.querySelector(`.file-tree-node[data-file-id="${normalized}"]`);
@@ -539,42 +577,8 @@ function setTabModifiedState(fileId, modified) {
     updateTreeModifiedIndicator(fileId, modified);
 }
 
-function clearAutoSaveTimer(fileId) {
-    const normalized = normalizeFileId(fileId);
-    const timer = autoSaveTimers.get(normalized);
-    if (timer) {
-        clearTimeout(timer);
-        autoSaveTimers.delete(normalized);
-    }
-}
-
-function scheduleAutoSave(fileId) {
-    const normalized = normalizeFileId(fileId);
-    const tab = findOpenTab(normalized);
-    if (!tab?.modified) return;
-
-    clearAutoSaveTimer(normalized);
-    const timer = setTimeout(async () => {
-        autoSaveTimers.delete(normalized);
-        if (autoSaveInFlight.has(normalized)) return;
-        if (!findOpenTab(normalized)?.modified) return;
-
-        autoSaveInFlight.add(normalized);
-        const statusEl = document.getElementById('saveStatus');
-        if (statusEl) statusEl.textContent = 'Autosaving...';
-        const ok = await saveFileById(normalized, { silent: true });
-        if (statusEl && findOpenTab(normalized)) {
-            statusEl.textContent = ok ? 'Autosaved' : 'Autosave failed';
-            setTimeout(() => {
-                if (statusEl.textContent === 'Autosaved' || statusEl.textContent === 'Autosave failed') {
-                    statusEl.textContent = '';
-                }
-            }, 1500);
-        }
-        autoSaveInFlight.delete(normalized);
-    }, AUTOSAVE_DELAY_MS);
-
-    autoSaveTimers.set(normalized, timer);
+function clearAutoSaveTimer() {
+    // Autosave intentionally disabled.
 }
 
 function rememberClosedTab(tab) {
@@ -875,7 +879,7 @@ require(['vs/editor/editor.main'], function () {
     });
 
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function () {
-        saveCurrentFile();
+        savePrimaryAction();
     });
 
     loadWorkspaceData();
@@ -1158,53 +1162,93 @@ async function loadWorkspaceData() {
     }
 }
 
+function parseLogDate(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function isSuccessExecutionAction(action) {
+    return action === 'LOAD_SCRIPT' || action === 'ECDH_HANDSHAKE';
+}
+
+function isFailedExecutionAction(action) {
+    const normalized = String(action || '');
+    return normalized.includes('BLOCK') || normalized.includes('INVALID');
+}
+
+function formatActionLabel(action) {
+    const normalized = String(action || 'UNKNOWN').trim();
+    if (!normalized) return 'Unknown';
+    return normalized
+        .toLowerCase()
+        .replaceAll('_', ' ')
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function renderChart() {
-    // Count pass/fail from logs
-    // Pass = successful execution actions (legacy + ECDH flow)
-    const passLogs = logs.filter(l =>
-        l.action === 'LOAD_SCRIPT' ||
-        l.action === 'ECDH_HANDSHAKE'
-    );
-    const failLogs = logs.filter(l =>
-        l.action.includes('BLOCK') ||
-        l.action.includes('INVALID')
-    );
+    const executionLogs = logs.filter((item) => isSuccessExecutionAction(item.action) || isFailedExecutionAction(item.action));
+    const passLogs = executionLogs.filter((item) => isSuccessExecutionAction(item.action));
+    const failLogs = executionLogs.filter((item) => isFailedExecutionAction(item.action));
+    const blockedLogs = logs.filter((item) => isFailedExecutionAction(item.action));
 
     const passCount = passLogs.length;
     const failCount = failLogs.length;
     const total = passCount + failCount;
     const successRate = total > 0 ? Math.round((passCount / total) * 100) : 0;
 
-    // Update stats - do this regardless of Chart.js
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayExecutionLogs = executionLogs.filter((item) => {
+        const createdAt = parseLogDate(item.created_at);
+        return createdAt && createdAt >= todayStart;
+    });
+    const todaySuccess = todayExecutionLogs.filter((item) => isSuccessExecutionAction(item.action)).length;
+    const todaySuccessRate = todayExecutionLogs.length > 0
+        ? Math.round((todaySuccess / todayExecutionLogs.length) * 100)
+        : 0;
+    const uniqueIps = new Set(
+        executionLogs
+            .map((item) => String(item.ip || '').trim())
+            .filter((ip) => ip && ip.toLowerCase() !== 'unknown')
+    ).size;
+
+    // Update overview counters
     const passEl = document.getElementById('passCount');
     const failEl = document.getElementById('failCount');
     const totalEl = document.getElementById('totalExecutions');
     const rateEl = document.getElementById('successRate');
+    const todayExecEl = document.getElementById('overviewTodayExecutions');
+    const todayRateEl = document.getElementById('overviewTodaySuccessRate');
+    const blockedEl = document.getElementById('overviewBlockedAttempts');
+    const uniqueIpsEl = document.getElementById('overviewUniqueIps');
 
     if (passEl) passEl.textContent = passCount;
     if (failEl) failEl.textContent = failCount;
     if (totalEl) totalEl.textContent = total;
-    if (rateEl) rateEl.textContent = successRate + '%';
+    if (rateEl) rateEl.textContent = `${successRate}%`;
+    if (todayExecEl) todayExecEl.textContent = String(todayExecutionLogs.length);
+    if (todayRateEl) todayRateEl.textContent = `${todaySuccessRate}%`;
+    if (blockedEl) blockedEl.textContent = String(blockedLogs.length);
+    if (uniqueIpsEl) uniqueIpsEl.textContent = String(uniqueIps);
 
-    // Render recent executions
+    // Render recent execution activity
     const recentContainer = document.getElementById('recentExecutions');
     if (recentContainer) {
-        const recentLogs = logs.filter(l =>
-            l.action === 'LOAD_SCRIPT' ||
-            l.action === 'ECDH_HANDSHAKE' ||
-            l.action.includes('BLOCK') ||
-            l.action.includes('INVALID')
-        ).slice(0, 5);
+        const recentLogs = [...executionLogs]
+            .sort((left, right) => String(right.created_at || '').localeCompare(String(left.created_at || '')))
+            .slice(0, 5);
 
         if (recentLogs.length === 0) {
             recentContainer.innerHTML = '<div class="text-center text-gray-500 text-sm py-8">No executions yet</div>';
         } else {
-            recentContainer.innerHTML = recentLogs.map(log => {
-                const isSuccess = log.action === 'LOAD_SCRIPT' || log.action === 'ECDH_HANDSHAKE';
-                const timeAgo = getTimeAgo(new Date(log.created_at));
+            recentContainer.innerHTML = recentLogs.map((log) => {
+                const isSuccess = isSuccessExecutionAction(log.action);
                 const actionName = isSuccess
                     ? (log.action === 'ECDH_HANDSHAKE' ? 'Loaded (ECDH)' : 'Loaded')
-                    : log.action.replaceAll('_', ' ');
+                    : formatActionLabel(log.action);
+                const createdAt = parseLogDate(log.created_at);
+                const timeAgo = createdAt ? getTimeAgo(createdAt) : 'Unknown time';
+                const detailLine = log.details ? escapeHtml(String(log.details)) : escapeHtml(String(log.ip || 'Unknown IP'));
                 return `
                     <div class="flex items-center justify-between py-2 px-3 rounded-lg bg-[#09090b]">
                         <div class="flex items-center gap-3">
@@ -1212,8 +1256,8 @@ function renderChart() {
                                 <i data-lucide="${isSuccess ? 'check' : 'x'}" class="w-4 h-4 ${isSuccess ? 'text-emerald-400' : 'text-rose-400'}"></i>
                             </div>
                             <div>
-                                <div class="text-sm text-white">${actionName}</div>
-                                <div class="text-xs text-gray-500">${log.ip || 'Unknown IP'}</div>
+                                <div class="text-sm text-white">${escapeHtml(actionName)}</div>
+                                <div class="text-xs text-gray-500 truncate max-w-[260px]">${detailLine}</div>
                             </div>
                         </div>
                         <span class="text-xs text-gray-500">${timeAgo}</span>
@@ -1224,52 +1268,168 @@ function renderChart() {
         }
     }
 
-    // Render doughnut chart (only if Chart.js is available)
-    const canvas = document.getElementById('executionChart');
-    if (!canvas) return;
-
-    // Use ChartJS (stored before Monaco loads) or Chart
     const ChartLib = window.ChartJS || window.Chart;
-
-    // Wait for Chart.js to load (with timeout)
     if (!ChartLib) {
         if (!window._chartRetryCount) window._chartRetryCount = 0;
-        window._chartRetryCount++;
-        if (window._chartRetryCount < 50) { // Max 5 seconds
-            setTimeout(renderChart, 100);
-        }
+        window._chartRetryCount += 1;
+        if (window._chartRetryCount < 50) setTimeout(renderChart, 100);
         return;
     }
+    const isLightTheme = document.documentElement.getAttribute('data-theme') === 'light';
+    const axisTickColor = isLightTheme ? '#334155' : '#94a3b8';
+    const gridLineColor = isLightTheme ? 'rgba(71, 85, 105, 0.18)' : 'rgba(148, 163, 184, 0.12)';
 
-    const ctx = canvas.getContext('2d');
+    // Chart 1: pass/fail doughnut
+    const executionCanvas = document.getElementById('executionChart');
+    if (executionCanvas) {
+        const ctx = executionCanvas.getContext('2d');
+        if (executionChart) executionChart.destroy();
+        const chartData = total > 0 ? [passCount, failCount] : [1];
+        const chartColors = total > 0 ? ['#10b981', '#f43f5e'] : ['#3f3f46'];
 
-    // Destroy existing chart
-    if (executionChart) executionChart.destroy();
-
-    // Always show chart - gray if no data
-    const chartData = total > 0 ? [passCount, failCount] : [1];
-    const chartColors = total > 0 ? ['#10b981', '#f43f5e'] : ['#3f3f46'];
-
-    executionChart = new ChartLib(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: ['Passed', 'Failed'],
-            datasets: [{
-                data: chartData,
-                backgroundColor: chartColors,
-                borderWidth: 0,
-                cutout: '70%'
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: { display: false },
-                tooltip: { enabled: total > 0 }
+        executionChart = new ChartLib(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Passed', 'Failed'],
+                datasets: [{
+                    data: chartData,
+                    backgroundColor: chartColors,
+                    borderWidth: 0,
+                    cutout: '70%'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: total > 0 }
+                }
             }
+        });
+    }
+
+    // Chart 2: 7-day trend (success vs failed)
+    const trendCanvas = document.getElementById('executionTrendChart');
+    if (trendCanvas) {
+        const trendCtx = trendCanvas.getContext('2d');
+        if (executionTrendChart) executionTrendChart.destroy();
+
+        const days = [];
+        const dayLookup = new Map();
+        for (let offset = 6; offset >= 0; offset -= 1) {
+            const dayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset);
+            const key = dayDate.toISOString().slice(0, 10);
+            const bucket = {
+                key,
+                label: dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                success: 0,
+                failed: 0
+            };
+            days.push(bucket);
+            dayLookup.set(key, bucket);
         }
-    });
+
+        for (const log of executionLogs) {
+            const createdAt = parseLogDate(log.created_at);
+            if (!createdAt) continue;
+            const key = new Date(createdAt.getFullYear(), createdAt.getMonth(), createdAt.getDate()).toISOString().slice(0, 10);
+            const bucket = dayLookup.get(key);
+            if (!bucket) continue;
+            if (isSuccessExecutionAction(log.action)) bucket.success += 1;
+            else bucket.failed += 1;
+        }
+
+        executionTrendChart = new ChartLib(trendCtx, {
+            type: 'line',
+            data: {
+                labels: days.map((item) => item.label),
+                datasets: [
+                    {
+                        label: 'Passed',
+                        data: days.map((item) => item.success),
+                        borderColor: '#22c55e',
+                        backgroundColor: 'rgba(34, 197, 94, 0.18)',
+                        pointBackgroundColor: '#22c55e',
+                        fill: true,
+                        tension: 0.35,
+                        borderWidth: 2
+                    },
+                    {
+                        label: 'Failed',
+                        data: days.map((item) => item.failed),
+                        borderColor: '#f43f5e',
+                        backgroundColor: 'rgba(244, 63, 94, 0.12)',
+                        pointBackgroundColor: '#f43f5e',
+                        fill: true,
+                        tension: 0.35,
+                        borderWidth: 2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { labels: { color: axisTickColor } }
+                },
+                scales: {
+                    x: { ticks: { color: axisTickColor }, grid: { color: gridLineColor } },
+                    y: { beginAtZero: true, ticks: { color: axisTickColor }, grid: { color: gridLineColor } }
+                }
+            }
+        });
+    }
+
+    // Chart 3: top action breakdown
+    const breakdownCanvas = document.getElementById('eventBreakdownChart');
+    if (breakdownCanvas) {
+        const breakdownCtx = breakdownCanvas.getContext('2d');
+        if (eventBreakdownChart) eventBreakdownChart.destroy();
+
+        const actionCounts = new Map();
+        for (const log of logs) {
+            const action = String(log.action || 'UNKNOWN');
+            actionCounts.set(action, (actionCounts.get(action) || 0) + 1);
+        }
+        const topActions = [...actionCounts.entries()]
+            .sort((left, right) => right[1] - left[1])
+            .slice(0, 6);
+
+        const labels = topActions.length > 0
+            ? topActions.map(([action]) => {
+                const label = formatActionLabel(action);
+                return label.length > 20 ? `${label.slice(0, 20)}...` : label;
+            })
+            : ['No Events'];
+        const values = topActions.length > 0 ? topActions.map(([, count]) => count) : [0];
+        const colors = ['#3b82f6', '#22c55e', '#f59e0b', '#f43f5e', '#8b5cf6', '#14b8a6'];
+
+        eventBreakdownChart = new ChartLib(breakdownCtx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Events',
+                    data: values,
+                    backgroundColor: labels.map((_, index) => colors[index % colors.length]),
+                    borderRadius: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: { ticks: { color: axisTickColor }, grid: { display: false } },
+                    y: { beginAtZero: true, ticks: { color: axisTickColor, precision: 0 }, grid: { color: gridLineColor } }
+                }
+            }
+        });
+    }
 }
 
 function getTimeAgo(date) {
@@ -2081,29 +2241,69 @@ function getLoaderExtensionByWorkspaceLanguage(language) {
     return 'py';
 }
 
+async function savePrimaryAction() {
+    if (getDirtyTabCount() > 1) {
+        const dirtyCount = getDirtyTabCount();
+        const statusEl = document.getElementById('saveStatus');
+        if (statusEl) statusEl.textContent = `Saving ${dirtyCount} files...`;
+
+        const allSaved = await saveAllOpenTabs({ silent: true });
+        if (statusEl) {
+            statusEl.textContent = allSaved ? `Saved ${dirtyCount} files` : 'Some files failed';
+            setTimeout(() => {
+                if (statusEl.textContent === `Saved ${dirtyCount} files` || statusEl.textContent === 'Some files failed') {
+                    statusEl.textContent = '';
+                }
+            }, 3000);
+        }
+
+        if (!allSaved) {
+            showToast('Warning', 'Some files failed to save', 'warning');
+        }
+        return allSaved;
+    }
+
+    return await saveCurrentFile();
+}
+
 async function saveCurrentFile() {
     // If we have an active file in tabs, save that via the file API
     if (activeFileId) {
         const statusEl = document.getElementById('saveStatus');
-        statusEl.textContent = 'Saving...';
+        const activeTab = findOpenTab(activeFileId);
+        if (activeTab && !activeTab.modified) {
+            if (statusEl) {
+                statusEl.textContent = 'Up to date';
+                setTimeout(() => {
+                    if (statusEl.textContent === 'Up to date') statusEl.textContent = '';
+                }, 1500);
+            }
+            return true;
+        }
+
+        if (statusEl) statusEl.textContent = 'Saving...';
         const ok = await saveFileById(activeFileId);
         if (ok) {
-            statusEl.textContent = 'Saved';
-            setTimeout(() => statusEl.textContent = '', 3000);
+            if (statusEl) {
+                statusEl.textContent = 'Saved';
+                setTimeout(() => {
+                    if (statusEl.textContent === 'Saved') statusEl.textContent = '';
+                }, 3000);
+            }
         } else {
-            statusEl.textContent = 'Error';
+            if (statusEl) statusEl.textContent = 'Error';
         }
-        return;
+        return ok;
     }
 
     // Fallback to old single-file save behavior (legacy, when no file explorer tabs)
     if (!currentProjectKey) {
         showAlert('Error', 'Please select a file to save!');
-        return;
+        return false;
     }
     const content = editor.getValue();
     const statusEl = document.getElementById('saveStatus');
-    statusEl.textContent = 'Saving...';
+    if (statusEl) statusEl.textContent = 'Saving...';
 
     try {
         const res = await fetch(`/api/projects/${currentProjectKey}`, {
@@ -2113,7 +2313,7 @@ async function saveCurrentFile() {
         });
         const data = await res.json();
         if (data.success) {
-            statusEl.textContent = `Saved (${data.status})`;
+            if (statusEl) statusEl.textContent = `Saved (${data.status})`;
             const s = projects.find(s => s.secret_key === currentProjectKey);
             if (s) {
                 s.content = content;
@@ -2127,14 +2327,21 @@ async function saveCurrentFile() {
             }
             renderFileList();
             renderProjectsGrid();
-            setTimeout(() => statusEl.textContent = '', 3000);
+            if (statusEl) {
+                setTimeout(() => {
+                    if (statusEl.textContent === `Saved (${data.status})`) statusEl.textContent = '';
+                }, 3000);
+            }
+            return true;
         } else {
-            statusEl.textContent = 'Error';
+            if (statusEl) statusEl.textContent = 'Error';
             showAlert('Error', data.error);
+            return false;
         }
     } catch (e) {
-        statusEl.textContent = 'Error';
+        if (statusEl) statusEl.textContent = 'Error';
         showAlert('Error', 'Connection error');
+        return false;
     }
 }
 
@@ -3336,11 +3543,6 @@ function switchToTab(fileId) {
                 const savedValue = lastSavedContent.get(normalizedFileId) ?? '';
                 const isModified = currentValue !== savedValue;
                 setTabModifiedState(normalizedFileId, isModified);
-                if (isModified) {
-                    scheduleAutoSave(normalizedFileId);
-                } else {
-                    clearAutoSaveTimer(normalizedFileId);
-                }
             });
             monacoModels.set(normalizedFileId, model);
         }
@@ -3433,7 +3635,6 @@ function doCloseTab(fileId, options = {}) {
     openTabs = openTabs.filter((tab) => normalizeFileId(tab.fileId) !== normalizedFileId);
 
     clearAutoSaveTimer(normalizedFileId);
-    autoSaveInFlight.delete(normalizedFileId);
 
     // Clean up model
     const model = monacoModels.get(normalizedFileId);
@@ -3572,6 +3773,7 @@ function showTabContextMenu(x, y, fileId) {
 
 // --- Render tabs UI ---
 function renderTabs() {
+    updatePrimarySaveButton();
     const tabBar = document.getElementById('editor-tab-bar');
     if (!tabBar) return;
 
@@ -3665,7 +3867,6 @@ async function saveFileById(fileId, options = {}) {
         if (data.success) {
             fileContents.set(normalizedFileId, content);
             lastSavedContent.set(normalizedFileId, content);
-            clearAutoSaveTimer(normalizedFileId);
             setTabModifiedState(normalizedFileId, false);
             return true;
         } else {
@@ -4460,13 +4661,13 @@ function showToast(title, message, type = 'info', duration = 3000) {
 // KEYBOARD SHORTCUTS
 // ============================================
 document.addEventListener('keydown', (e) => {
-    // Ctrl/Cmd + S: Save
+    // Ctrl/Cmd + S: Smart save (current file or all modified files)
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
         if (e.shiftKey) {
             if (currentProjectKey) saveAllOpenTabs();
         } else {
-            if (currentProjectKey) saveCurrentFile();
+            if (currentProjectKey) savePrimaryAction();
         }
     }
 
@@ -6023,7 +6224,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Close modals on backdrop click
     document.querySelectorAll('[id$="Modal"]').forEach(modal => {
         modal.addEventListener('click', (e) => {
-            if (e.target === modal) modal.style.display = 'none';
+            if (e.target !== modal) return;
+            if (modal.getAttribute('data-lock-backdrop') === 'true') return;
+            modal.style.display = 'none';
         });
     });
 });
@@ -6034,6 +6237,5 @@ window.addEventListener('beforeunload', (event) => {
         event.returnValue = '';
     }
 
-    openTabs.forEach((tab) => clearAutoSaveTimer(tab.fileId));
     disconnectWorkspaceWebSocket({ allowReconnect: false });
 });

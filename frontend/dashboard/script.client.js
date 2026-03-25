@@ -54,8 +54,30 @@ function toggleSidebar() {
 
 // Auth Check
 const token = localStorage.getItem('token');
+const AUTH_RETURN_TO_KEY = 'auth_return_to';
+
+function sanitizeReturnToPath(path) {
+  if (!path) return '';
+  const value = String(path).trim();
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return '';
+  if (value.startsWith('/login') || value.startsWith('/register')) return '';
+  return value;
+}
+
+function getCurrentReturnToPath() {
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
+
+function redirectToLoginWithReturnTo(returnToPath = getCurrentReturnToPath()) {
+  const safeReturnTo = sanitizeReturnToPath(returnToPath) || '/dashboard';
+  try {
+    localStorage.setItem(AUTH_RETURN_TO_KEY, safeReturnTo);
+  } catch {}
+  window.location.replace(`/login?returnTo=${encodeURIComponent(safeReturnTo)}`);
+}
+
 if (!token) {
-  window.location.href = '/login';
+  redirectToLoginWithReturnTo();
 }
 
 // Global State
@@ -365,7 +387,8 @@ function showPanel(panelId, navEl) {
 function logout() {
   disconnectDashboardWebSocket({ allowReconnect: false });
   localStorage.removeItem('token');
-  window.location.href = '/login';
+  localStorage.removeItem(AUTH_RETURN_TO_KEY);
+  window.location.replace('/login');
 }
 
 // User Profile Functions
@@ -379,7 +402,7 @@ async function loadUserProfile() {
     if (res.status === 401 || res.status === 403) {
       disconnectDashboardWebSocket({ allowReconnect: false });
       localStorage.removeItem('token');
-      window.location.href = '/login';
+      redirectToLoginWithReturnTo();
       return;
     }
     
@@ -520,7 +543,8 @@ async function deleteAccount() {
     if (data.success) {
       showToast('Account deleted. Redirecting...', 'success');
       localStorage.removeItem('token');
-      setTimeout(() => window.location.href = '/login', 2000);
+      localStorage.removeItem(AUTH_RETURN_TO_KEY);
+      setTimeout(() => window.location.replace('/login'), 2000);
     } else {
       showToast(data.error || 'Failed to delete account', 'error');
     }

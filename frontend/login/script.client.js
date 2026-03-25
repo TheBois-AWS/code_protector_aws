@@ -2,6 +2,48 @@ if (window.lucide) {
   window.lucide.createIcons();
 }
 
+const AUTH_RETURN_TO_KEY = 'auth_return_to';
+const AUTH_DEFAULT_REDIRECT = '/dashboard';
+
+function sanitizeReturnToPath(path) {
+  if (!path) return '';
+  const value = String(path).trim();
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return '';
+  if (value.startsWith('/login') || value.startsWith('/register')) return '';
+  return value;
+}
+
+function getReturnToTarget() {
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = sanitizeReturnToPath(params.get('returnTo'));
+  if (fromQuery) {
+    try { localStorage.setItem(AUTH_RETURN_TO_KEY, fromQuery); } catch {}
+  }
+  const fromStorage = sanitizeReturnToPath(localStorage.getItem(AUTH_RETURN_TO_KEY));
+  return fromQuery || fromStorage || AUTH_DEFAULT_REDIRECT;
+}
+
+function buildAuthPageLink(basePath, returnTo) {
+  const safe = sanitizeReturnToPath(returnTo);
+  return safe ? `${basePath}?returnTo=${encodeURIComponent(safe)}` : basePath;
+}
+
+function updateAuthLinks(returnTo) {
+  const registerLink = buildAuthPageLink('/register', returnTo);
+  document.querySelectorAll('a[href="/register"]').forEach((anchor) => {
+    anchor.setAttribute('href', registerLink);
+  });
+}
+
+function redirectAfterAuthSuccess(returnTo) {
+  const target = sanitizeReturnToPath(returnTo) || AUTH_DEFAULT_REDIRECT;
+  try { localStorage.removeItem(AUTH_RETURN_TO_KEY); } catch {}
+  window.location.replace(target);
+}
+
+const returnToTarget = getReturnToTarget();
+updateAuthLinks(returnToTarget);
+
 (function initMatrixRain() {
   const canvas = document.getElementById('matrixCanvas');
   if (!canvas) return;
@@ -99,7 +141,7 @@ initPasswordToggles();
       headers: { Authorization: token }
     });
     if (res.ok) {
-      window.location.href = '/dashboard';
+      redirectAfterAuthSuccess(returnToTarget);
       return;
     }
   } catch (err) {
@@ -133,7 +175,7 @@ if (loginForm) {
         localStorage.setItem('token', result.token);
         setStatus('success', 'Login successful. Redirecting...');
         setTimeout(() => {
-          window.location.href = '/dashboard';
+          redirectAfterAuthSuccess(returnToTarget);
         }, 800);
         return;
       }

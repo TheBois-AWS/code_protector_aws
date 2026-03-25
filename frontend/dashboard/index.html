@@ -9,11 +9,33 @@
     <link rel="stylesheet" href="/dashboard/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        html.auth-pending body {
+            visibility: hidden;
+            opacity: 0;
+        }
+    </style>
     <script>
-        // Apply saved theme immediately to prevent flash
+        // Apply saved theme and guard auth before rendering protected UI.
         (function() {
-            const t = localStorage.getItem('theme');
-            if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+            document.documentElement.classList.add('auth-pending');
+            try {
+                const t = localStorage.getItem('theme');
+                if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                    localStorage.setItem('auth_return_to', returnTo);
+                    window.location.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+                    return;
+                }
+            } catch {
+                const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+                window.location.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+                return;
+            }
+            document.documentElement.classList.remove('auth-pending');
         })();
     </script>
     <script defer src="/dashboard/script.client.js"></script>

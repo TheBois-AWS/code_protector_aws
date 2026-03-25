@@ -2,6 +2,48 @@ if (window.lucide) {
   window.lucide.createIcons();
 }
 
+const AUTH_RETURN_TO_KEY = 'auth_return_to';
+const AUTH_DEFAULT_REDIRECT = '/dashboard';
+
+function sanitizeReturnToPath(path) {
+  if (!path) return '';
+  const value = String(path).trim();
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return '';
+  if (value.startsWith('/login') || value.startsWith('/register')) return '';
+  return value;
+}
+
+function getReturnToTarget() {
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = sanitizeReturnToPath(params.get('returnTo'));
+  if (fromQuery) {
+    try { localStorage.setItem(AUTH_RETURN_TO_KEY, fromQuery); } catch {}
+  }
+  const fromStorage = sanitizeReturnToPath(localStorage.getItem(AUTH_RETURN_TO_KEY));
+  return fromQuery || fromStorage || AUTH_DEFAULT_REDIRECT;
+}
+
+function buildAuthPageLink(basePath, returnTo) {
+  const safe = sanitizeReturnToPath(returnTo);
+  return safe ? `${basePath}?returnTo=${encodeURIComponent(safe)}` : basePath;
+}
+
+function updateAuthLinks(returnTo) {
+  const loginLink = buildAuthPageLink('/login', returnTo);
+  document.querySelectorAll('a[href="/login"]').forEach((anchor) => {
+    anchor.setAttribute('href', loginLink);
+  });
+}
+
+function redirectAfterAuthSuccess(returnTo) {
+  const target = sanitizeReturnToPath(returnTo) || AUTH_DEFAULT_REDIRECT;
+  try { localStorage.removeItem(AUTH_RETURN_TO_KEY); } catch {}
+  window.location.replace(target);
+}
+
+const returnToTarget = getReturnToTarget();
+updateAuthLinks(returnToTarget);
+
 (function initMatrixRain() {
   const canvas = document.getElementById('matrixCanvas');
   if (!canvas) return;
@@ -160,7 +202,7 @@ initPasswordUx();
       headers: { Authorization: token }
     });
     if (res.ok) {
-      window.location.href = '/dashboard';
+      redirectAfterAuthSuccess(returnToTarget);
       return;
     }
   } catch (err) {
@@ -203,7 +245,8 @@ if (registerForm) {
       if (result.success) {
         setStatus('success', 'Registration successful. Redirecting to login...');
         setTimeout(() => {
-          window.location.href = '/login';
+          const loginRedirect = buildAuthPageLink('/login', returnToTarget);
+          window.location.replace(loginRedirect);
         }, 1000);
         return;
       }
