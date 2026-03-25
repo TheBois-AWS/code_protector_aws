@@ -1,0 +1,41 @@
+export const config = {
+  appName: process.env.APP_NAME || 'code_protector_aws',
+  port: Number(process.env.PORT || 3001),
+  baseUrl: process.env.APP_BASE_URL || '',
+  allowedOrigins: (process.env.ALLOWED_ORIGINS || '*').split(',').map((value) => value.trim()).filter(Boolean),
+  s3Bucket: process.env.APP_S3_BUCKET || process.env.S3_BUCKET || process.env.CONTENT_BUCKET || '',
+  assetsBucket: process.env.APP_ASSETS_BUCKET || process.env.ASSETS_BUCKET || process.env.CONTENT_BUCKET || '',
+  cookieSecure: process.env.COOKIE_SECURE !== 'false',
+  lambdaMode: process.env.AWS_LAMBDA_FUNCTION_NAME ? 'lambda' : 'local',
+  tables: {
+    users: process.env.DDB_TABLE_USERS || process.env.DDB_USERS_TABLE || 'users',
+    workspaces: process.env.DDB_TABLE_WORKSPACES || process.env.DDB_WORKSPACES_TABLE || 'workspaces',
+    workspaceMembers: process.env.DDB_TABLE_WORKSPACE_MEMBERS || process.env.DDB_WORKSPACE_MEMBERS_TABLE || 'workspace_members',
+    workspaceInvitations: process.env.DDB_TABLE_WORKSPACE_INVITATIONS || process.env.DDB_WORKSPACE_INVITATIONS_TABLE || 'workspace_invitations',
+    projects: process.env.DDB_TABLE_PROJECTS || process.env.DDB_PROJECTS_TABLE || 'projects',
+    projectFiles: process.env.DDB_TABLE_PROJECT_FILES || process.env.DDB_PROJECT_FILES_TABLE || 'project_files',
+    licenses: process.env.DDB_TABLE_LICENSES || process.env.DDB_LICENSES_TABLE || 'licenses',
+    accessLists: process.env.DDB_TABLE_ACCESS_LISTS || process.env.DDB_ACCESS_LISTS_TABLE || 'access_lists',
+    logs: process.env.DDB_TABLE_LOGS || process.env.DDB_LOGS_TABLE || 'logs',
+    pinVerifications: process.env.DDB_TABLE_PIN_VERIFICATIONS || process.env.DDB_PIN_VERIFICATIONS_TABLE || 'pin_verifications',
+    rateLimits: process.env.DDB_TABLE_RATE_LIMITS || process.env.DDB_RATE_LIMITS_TABLE || 'rate_limits',
+    appConfig: process.env.DDB_TABLE_APP_CONFIG || process.env.DDB_APP_CONFIG_TABLE || 'app_config'
+  },
+  indexes: {
+    usersByEmail: process.env.DDB_INDEX_USERS_BY_EMAIL || 'EmailIndex',
+    workspacesByOwner: process.env.DDB_INDEX_WORKSPACES_BY_OWNER || 'OwnerIndex',
+    workspacesByLoaderKey: process.env.DDB_INDEX_WORKSPACES_BY_LOADER_KEY || 'LoaderKeyIndex',
+    membersByWorkspace: process.env.DDB_INDEX_WORKSPACE_MEMBERS_BY_WORKSPACE || 'WorkspaceIndex',
+    membersByUser: process.env.DDB_INDEX_WORKSPACE_MEMBERS_BY_USER || 'UserIndex',
+    invitationsByWorkspace: process.env.DDB_INDEX_WORKSPACE_INVITATIONS_BY_WORKSPACE || 'WorkspaceIndex',
+    invitationsByToken: process.env.DDB_INDEX_WORKSPACE_INVITATIONS_BY_TOKEN || 'TokenIndex',
+    projectsByWorkspace: process.env.DDB_INDEX_PROJECTS_BY_WORKSPACE || 'WorkspaceIndex',
+    projectsBySecretKey: process.env.DDB_INDEX_PROJECTS_BY_SECRET_KEY || 'SecretKeyIndex',
+    projectFilesByProject: process.env.DDB_INDEX_PROJECT_FILES_BY_PROJECT || 'ProjectIndex',
+    licensesByWorkspace: process.env.DDB_INDEX_LICENSES_BY_WORKSPACE || 'WorkspaceIndex',
+    licensesByKey: process.env.DDB_INDEX_LICENSES_BY_KEY || 'KeyIndex',
+    accessByWorkspace: process.env.DDB_INDEX_ACCESS_BY_WORKSPACE || 'WorkspaceIndex',
+    logsByWorkspace: process.env.DDB_INDEX_LOGS_BY_WORKSPACE || 'WorkspaceIndex',
+    pinByWorkspace: process.env.DDB_INDEX_PIN_BY_WORKSPACE || 'WorkspaceIndex'
+  }
+};

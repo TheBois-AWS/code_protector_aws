@@ -1,0 +1,887 @@
+﻿AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: code_protector_aws - CloudFront + S3 + Lambda + DynamoDB
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: code-protector-aws
+  Stage:
+    Type: String
+    Default: prod
+  FrontendBucketName:
+    Type: String
+    Default: ''
+  AllowedOrigins:
+    Type: CommaDelimitedList
+    Default: '*'
+  LambdaCodeS3Bucket:
+    Type: String
+  LambdaCodeS3Key:
+    Type: String
+  LambdaMemorySize:
+    Type: Number
+    Default: 1024
+  LambdaTimeout:
+    Type: Number
+    Default: 30
+  LambdaLogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues:
+      - 1
+      - 3
+      - 5
+      - 7
+      - 14
+      - 30
+      - 60
+      - 90
+      - 120
+      - 150
+      - 180
+      - 365
+      - 400
+      - 545
+      - 731
+      - 1096
+      - 1827
+      - 2192
+      - 2557
+      - 2922
+      - 3288
+      - 3653
+  EnableCloudWatchAlarms:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasFrontendBucketName: !Not [!Equals [!Ref FrontendBucketName, '']]
+  HasCloudWatchAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
+
+Resources:
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !If
+        - HasFrontendBucketName
+        - !Ref FrontendBucketName
+        - !Sub '${ProjectName}-${Stage}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${ProjectName}-${Stage}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action:
+              - s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  ApiExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DataAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt UsersTable.Arn
+                  - !GetAtt WorkspacesTable.Arn
+                  - !GetAtt WorkspaceMembersTable.Arn
+                  - !GetAtt WorkspaceInvitationsTable.Arn
+                  - !GetAtt ProjectsTable.Arn
+                  - !GetAtt ProjectFilesTable.Arn
+                  - !GetAtt LicensesTable.Arn
+                  - !GetAtt AccessListsTable.Arn
+                  - !GetAtt LogsTable.Arn
+                  - !GetAtt PinVerificationsTable.Arn
+                  - !GetAtt RateLimitsTable.Arn
+                  - !GetAtt AppConfigTable.Arn
+                  - !Sub '${UsersTable.Arn}/index/*'
+                  - !Sub '${WorkspacesTable.Arn}/index/*'
+                  - !Sub '${WorkspaceMembersTable.Arn}/index/*'
+                  - !Sub '${WorkspaceInvitationsTable.Arn}/index/*'
+                  - !Sub '${ProjectsTable.Arn}/index/*'
+                  - !Sub '${ProjectFilesTable.Arn}/index/*'
+                  - !Sub '${LicensesTable.Arn}/index/*'
+                  - !Sub '${AccessListsTable.Arn}/index/*'
+                  - !Sub '${LogsTable.Arn}/index/*'
+                  - !Sub '${PinVerificationsTable.Arn}/index/*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub '${FrontendBucket.Arn}/*'
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Stage}-api'
+      Runtime: nodejs20.x
+      CodeUri:
+        Bucket: !Ref LambdaCodeS3Bucket
+        Key: !Ref LambdaCodeS3Key
+      Handler: src/index.handler
+      Role: !GetAtt ApiExecutionRole.Arn
+      MemorySize: !Ref LambdaMemorySize
+      Timeout: !Ref LambdaTimeout
+      Environment:
+        Variables:
+          APP_NAME: code_protector_aws
+          ALLOWED_ORIGINS: !Join [',', !Ref AllowedOrigins]
+          CONTENT_BUCKET: !Ref FrontendBucket
+          DDB_TABLE_USERS: !Ref UsersTable
+          DDB_TABLE_WORKSPACES: !Ref WorkspacesTable
+          DDB_TABLE_WORKSPACE_MEMBERS: !Ref WorkspaceMembersTable
+          DDB_TABLE_WORKSPACE_INVITATIONS: !Ref WorkspaceInvitationsTable
+          DDB_TABLE_PROJECTS: !Ref ProjectsTable
+          DDB_TABLE_PROJECT_FILES: !Ref ProjectFilesTable
+          DDB_TABLE_LICENSES: !Ref LicensesTable
+          DDB_TABLE_ACCESS_LISTS: !Ref AccessListsTable
+          DDB_TABLE_LOGS: !Ref LogsTable
+          DDB_TABLE_PIN_VERIFICATIONS: !Ref PinVerificationsTable
+          DDB_TABLE_RATE_LIMITS: !Ref RateLimitsTable
+          DDB_TABLE_APP_CONFIG: !Ref AppConfigTable
+
+  ApiFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ApiFunction}'
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  ApiErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasCloudWatchAlarms
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Stage}-api-errors'
+      AlarmDescription: Triggered when Lambda reports errors.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ApiThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasCloudWatchAlarms
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Stage}-api-throttles'
+      AlarmDescription: Triggered when Lambda receives throttles.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ApiDurationP95Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasCloudWatchAlarms
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Stage}-api-duration-p95'
+      AlarmDescription: Triggered when Lambda p95 duration exceeds 5 seconds.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiFunction
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ApiDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Condition: HasCloudWatchAlarms
+    Properties:
+      DashboardName: !Sub '${ProjectName}-${Stage}-ops'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Invocations / Errors / Throttles",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "metrics": [
+                  [ "AWS/Lambda", "Invocations", "FunctionName", "${ApiFunction}" ],
+                  [ ".", "Errors", ".", "." ],
+                  [ ".", "Throttles", ".", "." ]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Duration (p50/p95/p99)",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${ApiFunction}", { "stat": "p50" } ],
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${ApiFunction}", { "stat": "p95" } ],
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${ApiFunction}", { "stat": "p99" } ]
+                ]
+              }
+            }
+          ]
+        }
+
+  ApiFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt ApiFunction.Arn
+      AuthType: NONE
+      Cors:
+        AllowOrigins: !Ref AllowedOrigins
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+          - Cookie
+          - X-Pin-Token
+          - X-Requested-With
+          - Origin
+          - Accept
+        AllowCredentials: true
+
+  ApiFunctionUrlPublicInvokeUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunctionUrl
+      FunctionName: !Ref ApiFunction
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+
+  ApiFunctionUrlPublicInvokeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiFunction
+      Principal: '*'
+      InvokedViaFunctionUrl: true
+
+  SpaRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${ProjectName}-${Stage}-rewrite'
+      AutoPublish: true
+      FunctionConfig:
+        Runtime: cloudfront-js-2.0
+        Comment: Rewrite app routes to static pages
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri || '/';
+
+          if (uri.indexOf('/api/') === 0 || uri.indexOf('/files/') === 0) {
+            return request;
+          }
+
+          if (uri === '/' || uri === '') {
+            request.uri = '/index.html';
+            return request;
+          }
+
+          if (uri === '/login' || uri === '/register' || uri === '/dashboard') {
+            request.uri = uri + '/index.html';
+            return request;
+          }
+
+          if (uri.indexOf('/workspace') === 0 && uri.lastIndexOf('.') === -1) {
+            request.uri = '/workspace/index.html';
+            return request;
+          }
+
+          if (uri.lastIndexOf('.') === -1) {
+            request.uri = uri.replace(/\/$/, '') + '/index.html';
+          }
+
+          return request;
+        }
+
+  StaticCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub '${ProjectName}-${Stage}-static'
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingBrotli: true
+          EnableAcceptEncodingGzip: true
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  NoCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub '${ProjectName}-${Stage}-nocache'
+        DefaultTTL: 0
+        MaxTTL: 1
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingBrotli: false
+          EnableAcceptEncodingGzip: false
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: FrontendOrigin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref FrontendOriginAccessControl
+            S3OriginConfig: {}
+          - Id: ApiOrigin
+            DomainName: !Select
+              - 0
+              - !Split
+                - /
+                - !Select
+                  - 1
+                  - !Split
+                    - https://
+                    - !GetAtt ApiFunctionUrl.FunctionUrl
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachePolicyId: !Ref StaticCachePolicy
+          Compress: true
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRewriteFunction.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachePolicyId: !Ref NoCachePolicy
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+            Compress: false
+          - PathPattern: /files/*
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachePolicyId: !Ref NoCachePolicy
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+            Compress: false
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-users'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EmailIndex
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  WorkspacesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-workspaces'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: loader_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: OwnerIndex
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: LoaderKeyIndex
+          KeySchema:
+            - AttributeName: loader_key
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  WorkspaceMembersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-workspace-members'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: workspace_id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: WorkspaceIndex
+          KeySchema:
+            - AttributeName: workspace_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: UserIndex
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  WorkspaceInvitationsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-workspace-invitations'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: workspace_id
+          AttributeType: S
+        - AttributeName: token
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: WorkspaceIndex
+          KeySchema:
+            - AttributeName: workspace_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: TokenIndex
+          KeySchema:
+            - AttributeName: token
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: EmailIndex
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  ProjectsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-projects'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: workspace_id
+          AttributeType: S
+        - AttributeName: secret_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: WorkspaceIndex
+          KeySchema:
+            - AttributeName: workspace_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: SecretKeyIndex
+          KeySchema:
+            - AttributeName: secret_key
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  ProjectFilesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-project-files'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: project_id
+          AttributeType: S
+        - AttributeName: parent_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ProjectIndex
+          KeySchema:
+            - AttributeName: project_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ParentIndex
+          KeySchema:
+            - AttributeName: parent_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  LicensesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-licenses'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: workspace_id
+          AttributeType: S
+        - AttributeName: key
+          AttributeType: S
+        - AttributeName: project_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: WorkspaceIndex
+          KeySchema:
+            - AttributeName: workspace_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: KeyIndex
+          KeySchema:
+            - AttributeName: key
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ProjectIndex
+          KeySchema:
+            - AttributeName: project_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  AccessListsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-access-lists'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: workspace_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: WorkspaceIndex
+          KeySchema:
+            - AttributeName: workspace_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  LogsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-logs'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: workspace_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: WorkspaceIndex
+          KeySchema:
+            - AttributeName: workspace_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: WorkspaceTimestampIndex
+          KeySchema:
+            - AttributeName: workspace_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  PinVerificationsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-pin-verifications'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: token
+          AttributeType: S
+        - AttributeName: workspace_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: token
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: WorkspaceIndex
+          KeySchema:
+            - AttributeName: workspace_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  RateLimitsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-rate-limits'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: key
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  AppConfigTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-app-config'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: key
+          KeyType: HASH
+
+Outputs:
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  CloudFrontDistributionId:
+    Value: !Ref Distribution
+  CloudFrontDomainName:
+    Value: !GetAtt Distribution.DomainName
+  ApiFunctionName:
+    Value: !Ref ApiFunction
+  ApiFunctionArn:
+    Value: !GetAtt ApiFunction.Arn
+  ApiFunctionUrl:
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl
+  ApiFunctionLogGroupName:
+    Value: !Ref ApiFunctionLogGroup
+  ApiErrorsAlarmName:
+    Condition: HasCloudWatchAlarms
+    Value: !Ref ApiErrorsAlarm
+  ApiThrottlesAlarmName:
+    Condition: HasCloudWatchAlarms
+    Value: !Ref ApiThrottlesAlarm
+  ApiDurationP95AlarmName:
+    Condition: HasCloudWatchAlarms
+    Value: !Ref ApiDurationP95Alarm
+  ApiDashboardName:
+    Condition: HasCloudWatchAlarms
+    Value: !Ref ApiDashboard
+  UsersTableName:
+    Value: !Ref UsersTable
+  WorkspacesTableName:
+    Value: !Ref WorkspacesTable
+  ProjectsTableName:
+    Value: !Ref ProjectsTable
+  ProjectFilesTableName:
+    Value: !Ref ProjectFilesTable
+  LicensesTableName:
+    Value: !Ref LicensesTable
+  LogsTableName:
+    Value: !Ref LogsTable

@@ -1,0 +1,204 @@
+name: deploy-code-protector-aws
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws_region:
+        description: AWS region
+        required: false
+        default: ap-southeast-2
+      stage:
+        description: Deployment stage
+        required: false
+        default: prod
+      stack_name:
+        description: CloudFormation stack name
+        required: false
+        default: ""
+  push:
+    branches:
+      - main
+    paths:
+      - src/**
+      - frontend/**
+      - infra/template.yaml
+      - package.json
+      - package-lock.json
+      - .github/workflows/deploy-aws.yml
+
+concurrency:
+  group: deploy-aws-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ${{ github.event.inputs.aws_region || vars.AWS_REGION || 'ap-southeast-2' }}
+      STAGE: ${{ github.event.inputs.stage || vars.STAGE || 'prod' }}
+      STACK_NAME: ${{ github.event.inputs.stack_name || vars.STACK_NAME || 'code-protector-aws-prod-stack' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'code-protector-aws' }}
+      ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS || '*' }}
+      FRONTEND_BUCKET_NAME: ${{ vars.FRONTEND_BUCKET_NAME || '' }}
+      LAMBDA_ARTIFACT_BUCKET: ${{ vars.LAMBDA_ARTIFACT_BUCKET || '' }}
+      LAMBDA_MEMORY_SIZE: ${{ vars.LAMBDA_MEMORY_SIZE || '1024' }}
+      LAMBDA_TIMEOUT: ${{ vars.LAMBDA_TIMEOUT || '30' }}
+      LAMBDA_LOG_RETENTION_DAYS: ${{ vars.LAMBDA_LOG_RETENTION_DAYS || '30' }}
+      ENABLE_CLOUDWATCH_ALARMS: ${{ vars.ENABLE_CLOUDWATCH_ALARMS || 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-code-protector-aws
+
+      - name: Validate Required Inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${LAMBDA_ARTIFACT_BUCKET}" ]; then
+            echo "Missing repository variable: LAMBDA_ARTIFACT_BUCKET" >&2
+            exit 1
+          fi
+
+      - name: Ensure Lambda Artifact Bucket Exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if aws s3api head-bucket --bucket "${LAMBDA_ARTIFACT_BUCKET}" 2>/dev/null; then
+            echo "Using existing artifact bucket: ${LAMBDA_ARTIFACT_BUCKET}"
+          else
+            if [ "${AWS_REGION}" = "us-east-1" ]; then
+              aws s3api create-bucket \
+                --bucket "${LAMBDA_ARTIFACT_BUCKET}" \
+                --region "${AWS_REGION}"
+            else
+              aws s3api create-bucket \
+                --bucket "${LAMBDA_ARTIFACT_BUCKET}" \
+                --region "${AWS_REGION}" \
+                --create-bucket-configuration LocationConstraint="${AWS_REGION}"
+            fi
+            echo "Created artifact bucket: ${LAMBDA_ARTIFACT_BUCKET}"
+          fi
+
+      - name: Install Dependencies
+        run: npm ci --omit=dev
+
+      - name: Package Lambda Artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          zip -r dist/lambda.zip src package.json package-lock.json node_modules > /dev/null
+
+      - name: Upload Lambda Artifact
+        id: lambda_artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          LAMBDA_KEY="lambda/${STAGE}/${GITHUB_SHA}.zip"
+          aws s3 cp dist/lambda.zip "s3://${LAMBDA_ARTIFACT_BUCKET}/${LAMBDA_KEY}" --region "${AWS_REGION}"
+          echo "lambda_key=${LAMBDA_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy CloudFormation Stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          PARAMS=(
+            "ProjectName=${PROJECT_NAME}"
+            "Stage=${STAGE}"
+            "AllowedOrigins=${ALLOWED_ORIGINS}"
+            "LambdaCodeS3Bucket=${LAMBDA_ARTIFACT_BUCKET}"
+            "LambdaCodeS3Key=${{ steps.lambda_artifact.outputs.lambda_key }}"
+            "LambdaMemorySize=${LAMBDA_MEMORY_SIZE}"
+            "LambdaTimeout=${LAMBDA_TIMEOUT}"
+            "LambdaLogRetentionDays=${LAMBDA_LOG_RETENTION_DAYS}"
+            "EnableCloudWatchAlarms=${ENABLE_CLOUDWATCH_ALARMS}"
+          )
+
+          if [ -n "${FRONTEND_BUCKET_NAME}" ]; then
+            PARAMS+=("FrontendBucketName=${FRONTEND_BUCKET_NAME}")
+          fi
+
+          aws cloudformation deploy \
+            --template-file infra/template.yaml \
+            --stack-name "${STACK_NAME}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides "${PARAMS[@]}" \
+            --no-fail-on-empty-changeset \
+            --region "${AWS_REGION}"
+
+      - name: Resolve Stack Outputs
+        id: stack_outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRONTEND_BUCKET="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue | [0]" \
+            --output text)"
+          DIST_ID="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue | [0]" \
+            --output text)"
+          DOMAIN="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDomainName'].OutputValue | [0]" \
+            --output text)"
+          API_URL="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiFunctionUrl'].OutputValue | [0]" \
+            --output text)"
+
+          if [ "${FRONTEND_BUCKET}" = "None" ] || [ "${DIST_ID}" = "None" ]; then
+            echo "Cannot resolve FrontendBucketName/CloudFrontDistributionId from stack outputs." >&2
+            exit 1
+          fi
+
+          echo "frontend_bucket=${FRONTEND_BUCKET}" >> "$GITHUB_OUTPUT"
+          echo "distribution_id=${DIST_ID}" >> "$GITHUB_OUTPUT"
+          echo "domain=${DOMAIN}" >> "$GITHUB_OUTPUT"
+          echo "api_url=${API_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Frontend Assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws s3 sync frontend/ "s3://${{ steps.stack_outputs.outputs.frontend_bucket }}" --delete --region "${AWS_REGION}"
+
+      - name: Invalidate CloudFront Cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ steps.stack_outputs.outputs.distribution_id }}" \
+            --paths "/*" > /dev/null
+
+      - name: Deployment Summary
+        shell: bash
+        run: |
+          {
+            echo "## Deploy Complete"
+            echo "- Stack: \`${STACK_NAME}\`"
+            echo "- Region: \`${AWS_REGION}\`"
+            echo "- Frontend: https://${{ steps.stack_outputs.outputs.domain }}"
+            echo "- API URL: ${{ steps.stack_outputs.outputs.api_url }}"
+            echo "- Lambda artifact: s3://${LAMBDA_ARTIFACT_BUCKET}/${{ steps.lambda_artifact.outputs.lambda_key }}"
+          } >> "$GITHUB_STEP_SUMMARY"

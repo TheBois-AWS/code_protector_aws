@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - IrisAuth</title>
+    <link rel="icon" type="image/png" href="/assets/anhnen2.png">
+    <link rel="stylesheet" href="/dashboard/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        // Apply saved theme immediately to prevent flash
+        (function() {
+            const t = localStorage.getItem('theme');
+            if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        })();
+    </script>
+    <script defer src="/dashboard/script.client.js"></script>
+
+</head>
+
+<body class="flex flex-col md:flex-row h-screen overflow-hidden">
+    <!-- Mobile Menu Toggle -->
+    <button id="mobileSidebarToggle" class="fixed top-4 left-4 z-50 md:hidden p-2 bg-zinc-800 rounded-lg border border-zinc-700" aria-label="Toggle menu">
+        <i data-lucide="menu" class="w-5 h-5 text-white"></i>
+    </button>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar w-full md:w-64 flex flex-row md:flex-col py-3 md:py-6 px-3 shrink-0 fixed md:relative h-full -translate-x-full md:translate-x-0 transition-transform duration-300 z-40">
+        <button id="sidebarToggle" class="hidden md:flex items-center justify-center w-9 h-9 rounded-full bg-[#18181b] hover:bg-[#27272a] border border-[#27272a] transition-colors absolute top-1/2 -right-4 -translate-y-1/2 z-50 shadow-md cursor-pointer" onclick="toggleSidebar()" title="Toggle sidebar">
+            <i data-lucide="chevron-left" class="w-5 h-5 text-gray-400 -ml-2"></i>
+        </button>
+        
+        <div class="flex flex-col flex-1 min-h-0 overflow-hidden">
+        <!-- Logo -->   
+        <div class="flex items-center justify-between gap-3 px-3 md:mb-8 relative">
+            <div class="flex items-center gap-3 flex-1 cursor-pointer hover:opacity-80 transition-opacity" 
+                onclick="window.location.href='/'">
+                <img src="/assets/anhnen1.png" alt="GuardScript" class="brand-logo shrink-0">
+                <span class="sidebar-label text-lg font-bold brand-text">
+                    <span class="brand-word-guard">Guard</span><span class="brand-word-script">Script</span>
+                </span>
+            </div>
+        </div>
+
+        <!-- Navigation -->
+        <nav class="flex-1 flex flex-row md:flex-col gap-1 md:gap-0 md:space-y-1 overflow-x-auto md:overflow-visible py-2 md:py-0">
+            <a class="nav-item active flex items-center gap-3 px-3 py-2.5 text-sm text-gray-200 cursor-pointer"
+                onclick="showPanel('overview', this)">
+                <i data-lucide="layout-dashboard" class="w-4 h-4 shrink-0"></i>
+                <span class="sidebar-label">Overview</span>
+            </a>
+            <a class="nav-item flex items-center gap-3 px-3 py-2.5 text-sm text-gray-400 cursor-pointer"
+                onclick="showPanel('workspaces', this)">
+                <i data-lucide="folder-code" class="w-4 h-4 shrink-0"></i>
+                <span class="sidebar-label">Workspaces</span>
+            </a>
+            <a class="nav-item flex items-center gap-3 px-3 py-2.5 text-sm text-gray-400 cursor-pointer"
+                onclick="showPanel('settings', this)">
+                <i data-lucide="settings" class="w-4 h-4 shrink-0"></i>
+                <span class="sidebar-label">Settings</span>
+            </a>
+        </nav>
+        </div>
+
+        <!-- User Profile (Bottom) -->
+        <div class="border-t border-[#27272a] pt-4 mt-4 md:mt-4 md:pt-4">
+            <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#27272a] transition-colors cursor-pointer"
+                onclick="showPanel('settings', document.querySelector('[onclick*=\" settings\"]'))">
+                <div
+                    class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500/20 to-purple-500/20 flex items-center justify-center border border-indigo-500/30 shrink-0">
+                    <i data-lucide="user" class="w-4 h-4 text-indigo-400"></i>
+                </div>
+                <div class="flex-1 min-w-0 sidebar-label">
+                    <div id="sidebarUsername" class="text-sm font-medium text-white truncate">Loading...</div>
+                    <div id="sidebarEmail" class="text-xs text-gray-500 truncate">...</div>
+                </div>
+                <i data-lucide="chevron-right" class="w-4 h-4 text-gray-600 sidebar-label shrink-0"></i>
+            </div>
+            <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme">
+                <i data-lucide="sun" class="w-4 h-4" id="themeIconSun" style="display:none"></i>
+                <i data-lucide="moon" class="w-4 h-4" id="themeIconMoon"></i>
+                <span id="themeLabel" class="sidebar-label">Light Mode</span>
+            </button>
+            <button
+                class="flex items-center gap-3 px-3 py-2.5 w-full text-sm text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all mt-1"
+                onclick="logout()">
+                <i data-lucide="log-out" class="w-4 h-4 shrink-0"></i>
+                <span class="sidebar-label">Logout</span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-auto bg-[#09090b]">
+        <!-- OVERVIEW PANEL -->
+        <div id="overview" class="view-panel active p-4 md:p-8">
+            <!-- Header -->
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">Dashboard Overview</h1>
+                    <p class="text-gray-500 text-sm mt-1">Welcome back! Here's what's happening with your projects.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button class="quick-action px-4 py-2.5"
+                        onclick="refreshDashboardData()">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                        Refresh Data
+                    </button>
+                    <button class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
+                        onclick="openCreateWorkspaceModal()">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        New Workspace
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                <div class="stat-card p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="icon-box indigo">
+                            <i data-lucide="folder-open" class="w-5 h-5 text-indigo-400"></i>
+                        </div>
+                        <span id="workspacesTrend" class="text-xs text-emerald-400 flex items-center gap-1">
+                            <i data-lucide="trending-up" class="w-3 h-3"></i>
+                        </span>
+                    </div>
+                    <div id="statsWorkspaces" class="text-2xl font-bold text-white">
+                        <div class="skeleton h-8 w-16 rounded bg-zinc-800 animate-pulse"></div>
+                    </div>
+                    <p class="text-gray-500 text-xs mt-1">Total Workspaces</p>
+                </div>
+                <div class="stat-card p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="icon-box emerald">
+                            <i data-lucide="file-code" class="w-5 h-5 text-emerald-400"></i>
+                        </div>
+                        <span id="projectsTrend" class="text-xs text-emerald-400 flex items-center gap-1">
+                            <i data-lucide="trending-up" class="w-3 h-3"></i>
+                        </span>
+                    </div>
+                    <div id="statsProjects" class="text-2xl font-bold text-white">
+                        <div class="skeleton h-8 w-16 rounded bg-zinc-800 animate-pulse"></div>
+                    </div>
+                    <p class="text-gray-500 text-xs mt-1">Protected Projects</p>
+                </div>
+                <div class="stat-card p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="icon-box amber">
+                            <i data-lucide="key" class="w-5 h-5 text-amber-400"></i>
+                        </div>
+                        <span id="licensesTrend" class="text-xs text-emerald-400 flex items-center gap-1">
+                            <i data-lucide="trending-up" class="w-3 h-3"></i>
+                        </span>
+                    </div>
+                    <div id="statsLicenses" class="text-2xl font-bold text-white">
+                        <div class="skeleton h-8 w-16 rounded bg-zinc-800 animate-pulse"></div>
+                    </div>
+                    <p class="text-gray-500 text-xs mt-1">Active Licenses</p>
+                </div>
+                <div class="stat-card p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="icon-box rose">
+                            <i data-lucide="activity" class="w-5 h-5 text-rose-400"></i>
+                        </div>
+                        <span id="executionsTrend" class="text-xs text-emerald-400 flex items-center gap-1">
+                            <i data-lucide="trending-up" class="w-3 h-3"></i>
+                        </span>
+                    </div>
+                    <div id="statsExecutions" class="text-2xl font-bold text-white">
+                        <div class="skeleton h-8 w-16 rounded bg-zinc-800 animate-pulse"></div>
+                    </div>
+                    <p class="text-gray-500 text-xs mt-1">Total Executions</p>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="mb-8">
+                <h3 class="text-sm font-medium text-gray-400 mb-4">Quick Actions</h3>
+                <div class="flex flex-wrap gap-3">
+                    <button class="quick-action" onclick="openCreateWorkspaceModal()">
+                        <i data-lucide="folder-plus" class="w-4 h-4 text-indigo-400"></i>
+                        Create Workspace
+                    </button>
+                    <button class="quick-action" onclick="showPanel('workspaces', document.querySelector('.nav-item[onclick*=\'workspaces\']'))">
+                        <i data-lucide="list" class="w-4 h-4 text-emerald-400"></i>
+                        View All Workspaces
+                    </button>
+                    <button class="quick-action" onclick="showPanel('settings', document.querySelector('.nav-item[onclick*=\'settings\']'))">
+                        <i data-lucide="user-cog" class="w-4 h-4 text-amber-400"></i>
+                        Account Settings
+                    </button>
+                    <button class="quick-action" onclick="window.open('https://github.com/TheBois-AWS/code_protector', '_blank')">
+                        <i data-lucide="book-open" class="w-4 h-4 text-blue-400"></i>
+                        Documentation
+                    </button>
+                </div>
+            </div>
+
+            <!-- Recent Workspaces -->
+            <div>
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-medium text-gray-400">Recent Workspaces</h3>
+                    <a class="text-xs text-indigo-400 hover:text-indigo-300 cursor-pointer"
+                        onclick="showPanel('workspaces', document.querySelector('[onclick*=\" workspaces\"]'))">View
+                        All</a>
+                </div>
+                <div id="recentWorkspaces" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- Skeleton Loading -->
+                    <div class="workspace-card p-6 animate-pulse">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="w-11 h-11 rounded-xl bg-zinc-800"></div>
+                            <div class="w-16 h-5 rounded bg-zinc-800"></div>
+                        </div>
+                        <div class="h-5 w-32 bg-zinc-800 rounded mb-2"></div>
+                        <div class="h-4 w-24 bg-zinc-800 rounded mb-4"></div>
+                        <div class="h-4 w-full bg-zinc-800 rounded"></div>
+                    </div>
+                    <div class="workspace-card p-6 animate-pulse">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="w-11 h-11 rounded-xl bg-zinc-800"></div>
+                            <div class="w-16 h-5 rounded bg-zinc-800"></div>
+                        </div>
+                        <div class="h-5 w-32 bg-zinc-800 rounded mb-2"></div>
+                        <div class="h-4 w-24 bg-zinc-800 rounded mb-4"></div>
+                        <div class="h-4 w-full bg-zinc-800 rounded"></div>
+                    </div>
+                    <div class="workspace-card p-6 animate-pulse">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="w-11 h-11 rounded-xl bg-zinc-800"></div>
+                            <div class="w-16 h-5 rounded bg-zinc-800"></div>
+                        </div>
+                        <div class="h-5 w-32 bg-zinc-800 rounded mb-2"></div>
+                        <div class="h-4 w-24 bg-zinc-800 rounded mb-4"></div>
+                        <div class="h-4 w-full bg-zinc-800 rounded"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- WORKSPACES PANEL -->
+        <div id="workspaces" class="view-panel p-4 md:p-8">
+            <!-- Header -->
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">Workspaces</h1>
+                    <p class="text-gray-500 text-sm mt-1">Manage your protected project workspaces</p>
+                </div>
+                <button
+                    class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
+                    onclick="openCreateWorkspaceModal()">
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                    New Workspace
+                </button>
+            </div>
+
+            <!-- Search & Filter -->
+            <div class="flex flex-col md:flex-row md:items-center gap-3 mb-6">
+                <div class="flex-1 relative">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"></i>
+                    <input type="text" id="workspaceSearch" placeholder="Search workspaces..."
+                        class="w-full bg-[#18181b] border border-[#27272a] rounded-lg pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none"
+                        oninput="filterWorkspaces()">
+                </div>
+                <select id="workspaceSort"
+                    class="w-full md:w-auto bg-[#18181b] border border-[#27272a] rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none"
+                    onchange="sortWorkspaces()">
+                    <option value="newest">Newest First</option>
+                    <option value="oldest">Oldest First</option>
+                    <option value="name">Name A-Z</option>
+                    <option value="name-desc">Name Z-A</option>
+                </select>
+            </div>
+
+            <!-- Workspaces Grid -->
+            <div id="workspaceList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <!-- Loading state -->
+                <div class="col-span-full text-center py-12 text-gray-500">Loading workspaces...</div>
+            </div>
+        </div>
+
+        <!-- SETTINGS PANEL -->
+        <div id="settings" class="view-panel p-4 md:p-8 overflow-y-auto">
+            <div class="mb-8">
+                <h1 class="text-2xl font-bold text-white mb-2">Account Settings</h1>
+                <p class="text-gray-500 text-sm">Manage your profile and account preferences</p>
+            </div>
+
+            <!-- Settings Grid - 2 columns on desktop -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                <!-- Left Column: Profile Information -->
+                <div class="stat-card p-6">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="icon-box indigo w-10 h-10">
+                            <i data-lucide="user" class="w-5 h-5 text-indigo-400"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-white font-semibold">Profile Information</h3>
+                            <p class="text-gray-500 text-xs">Update your account details</p>
+                        </div>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Display Name</label>
+                            <input type="text" id="settingsDisplayName"
+                                class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none"
+                                placeholder="Your display name">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Email Address</label>
+                            <input type="email" id="settingsEmail"
+                                class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-2.5 text-gray-500 text-sm focus:outline-none"
+                                disabled placeholder="Email (cannot be changed)">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Member Since</label>
+                            <input type="text" id="settingsMemberSince"
+                                class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-2.5 text-gray-500 text-sm focus:outline-none"
+                                disabled>
+                        </div>
+                        <button
+                            class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
+                            onclick="saveProfile()">
+                            <i data-lucide="save" class="w-4 h-4"></i>
+                            Save Changes
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Right Column: Change Password -->
+                <div class="stat-card p-6">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="icon-box amber w-10 h-10">
+                            <i data-lucide="lock" class="w-5 h-5 text-amber-400"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-white font-semibold">Change Password</h3>
+                            <p class="text-gray-500 text-xs">Update your security credentials</p>
+                        </div>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Current Password</label>
+                            <div class="relative">
+                                <input type="password" id="currentPassword"
+                                    class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none pr-10"
+                                    placeholder="Enter current password">
+                                <button type="button"
+                                    class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                                    onclick="togglePassword('currentPassword')">
+                                    <i data-lucide="eye" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-2">New Password</label>
+                            <div class="relative">
+                                <input type="password" id="newPassword"
+                                    class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none pr-10"
+                                    placeholder="Enter new password">
+                                <button type="button"
+                                    class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                                    onclick="togglePassword('newPassword')">
+                                    <i data-lucide="eye" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Confirm New Password</label>
+                            <div class="relative">
+                                <input type="password" id="confirmPassword"
+                                    class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none pr-10"
+                                    placeholder="Confirm new password">
+                                <button type="button"
+                                    class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                                    onclick="togglePassword('confirmPassword')">
+                                    <i data-lucide="eye" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <button
+                            class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
+                            onclick="changePassword()">
+                            <i data-lucide="key" class="w-4 h-4"></i>
+                            Update Password
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Full Width: Account Stats -->
+                <div class="lg:col-span-2 stat-card p-6">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="icon-box emerald w-10 h-10">
+                            <i data-lucide="bar-chart-3" class="w-5 h-5 text-emerald-400"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-white font-semibold">Account Statistics</h3>
+                            <p class="text-gray-500 text-xs">Your usage overview</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-[#09090b] rounded-lg p-4 border border-[#27272a]">
+                            <div class="text-2xl font-bold text-white" id="settingsStatWorkspaces">-</div>
+                            <div class="text-xs text-gray-500">Workspaces</div>
+                        </div>
+                        <div class="bg-[#09090b] rounded-lg p-4 border border-[#27272a]">
+                            <div class="text-2xl font-bold text-white" id="settingsStatProjects">-</div>
+                            <div class="text-xs text-gray-500">Projects</div>
+                        </div>
+                        <div class="bg-[#09090b] rounded-lg p-4 border border-[#27272a]">
+                            <div class="text-2xl font-bold text-white" id="settingsStatLicenses">-</div>
+                            <div class="text-xs text-gray-500">Licenses</div>
+                        </div>
+                        <div class="bg-[#09090b] rounded-lg p-4 border border-[#27272a]">
+                            <div class="text-2xl font-bold text-white" id="settingsStatLogs">-</div>
+                            <div class="text-xs text-gray-500">Execution Logs</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Full Width: Danger Zone -->
+                <div class="lg:col-span-2 stat-card p-6 border-red-500/20">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-10 h-10 rounded-lg bg-red-500/10 flex items-center justify-center">
+                            <i data-lucide="alert-triangle" class="w-5 h-5 text-red-400"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-white font-semibold">Danger Zone</h3>
+                            <p class="text-gray-500 text-xs">Irreversible account actions</p>
+                        </div>
+                    </div>
+                    <div class="bg-red-500/5 border border-red-500/20 rounded-lg p-4">
+                        <h4 class="text-red-400 font-medium mb-2">Delete Account</h4>
+                        <p class="text-gray-500 text-sm mb-4">Once you delete your account, there is no going back. All
+                            your workspaces, projects, and licenses will be permanently deleted.</p>
+                        <button class="btn-danger px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
+                            onclick="openDeleteAccountModal()">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            Delete Account
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Create Workspace Modal -->
+    <div id="createWorkspaceModal"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden items-center justify-center"
+        style="display: none;">
+        <div class="bg-[#18181b] rounded-2xl p-6 w-full max-w-md border border-[#27272a] shadow-2xl">
+            <div class="flex items-center gap-3 mb-6">
+                <div class="w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center">
+                    <i data-lucide="folder-plus" class="w-5 h-5 text-indigo-400"></i>
+                </div>
+                <div>
+                    <h2 class="text-lg font-bold text-white">Create Workspace</h2>
+                    <p class="text-gray-500 text-xs">Set up a new protected workspace</p>
+                </div>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Workspace Name</label>
+                    <input type="text" id="newWorkspaceName" placeholder="My Awesome Project"
+                        class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Language / Platform</label>
+                    <select id="newWorkspaceLang"
+                        class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none"
+                        onchange="toggleJsSubOption()">
+                        <option value="python">Python</option>
+                        <option value="javascript">JavaScript</option>
+                    </select>
+                    <p class="text-gray-600 text-xs mt-2">Choose the language for your loader</p>
+                </div>
+                <div id="jsSubOptionContainer" style="display: none;">
+                    <label class="block text-sm font-medium text-gray-400 mb-2">JavaScript Runtime</label>
+                    <select id="newWorkspaceJsType"
+                        class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none">
+                        <option value="nodejs">Node.js</option>
+                        <option value="userscript" disabled>Userscript (Coming soon)</option>
+                    </select>
+                    <p class="text-gray-600 text-xs mt-2">Choose the JavaScript runtime environment</p>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button class="px-4 py-2.5 text-sm text-gray-400 hover:text-white transition-colors"
+                    onclick="document.getElementById('createWorkspaceModal').style.display='none'">Cancel</button>
+                <button class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium"
+                    onclick="createWorkspace()">Create Workspace</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Account Modal -->
+    <div id="deleteAccountModal"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden items-center justify-center"
+        style="display: none;">
+        <div class="bg-[#18181b] rounded-2xl p-6 w-full max-w-md border border-red-500/30 shadow-2xl">
+            <div class="flex items-center gap-3 mb-6">
+                <div class="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center">
+                    <i data-lucide="alert-triangle" class="w-5 h-5 text-red-400"></i>
+                </div>
+                <div>
+                    <h2 class="text-lg font-bold text-white">Delete Account</h2>
+                    <p class="text-red-400 text-xs">This action cannot be undone</p>
+                </div>
+            </div>
+            <div class="bg-red-500/5 border border-red-500/20 rounded-lg p-4 mb-4">
+                <p class="text-gray-300 text-sm">This will permanently delete:</p>
+                <ul class="text-gray-400 text-sm mt-2 space-y-1">
+                    <li class="flex items-center gap-2"><i data-lucide="x" class="w-3 h-3 text-red-400"></i> All your
+                        workspaces</li>
+                    <li class="flex items-center gap-2"><i data-lucide="x" class="w-3 h-3 text-red-400"></i> All
+                        protected projects</li>
+                    <li class="flex items-center gap-2"><i data-lucide="x" class="w-3 h-3 text-red-400"></i> All
+                        licenses</li>
+                    <li class="flex items-center gap-2"><i data-lucide="x" class="w-3 h-3 text-red-400"></i> All
+                        execution logs</li>
+                </ul>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Enter your password to confirm</label>
+                    <input type="password" id="deleteAccountPassword" placeholder="Your password"
+                        class="w-full bg-[#09090b] border border-red-500/30 rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none">
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button class="px-4 py-2.5 text-sm text-gray-400 hover:text-white transition-colors"
+                    onclick="document.getElementById('deleteAccountModal').style.display='none'">Cancel</button>
+                <button
+                    class="bg-red-500 hover:bg-red-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+                    onclick="deleteAccount()">Delete My Account</button>
+            </div>
+        </div>
+    </div>
+
+
+</body>
+
+</html>

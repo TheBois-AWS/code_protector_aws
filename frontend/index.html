@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GuardScript | Secure Script Distribution</title>
+    <link rel="icon" type="image/png" href="/assets/anhnen2.png">
+    <link rel="stylesheet" href="/style.css">
+    <script defer src="/script.client.js"></script>
+</head>
+<body>
+    <div class="bg-glow" aria-hidden="true"></div>
+    <div class="bg-grid" aria-hidden="true"></div>
+
+    <header class="header-shell">
+        <nav class="site-nav" aria-label="Main navigation">
+            <a class="logo" href="/" aria-label="GuardScript home">
+                <img src="/assets/anhnen1.png" class="logo-img" alt="GuardScript logo">
+                <span class="logo-text">
+                    <span class="logo-guard">Guard</span><span class="logo-script">Script</span>
+                </span>
+            </a>
+
+            <button class="hamburger" aria-label="Toggle menu" aria-controls="primaryNav" aria-expanded="false">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+
+            <div class="nav-links" id="primaryNav">
+                <a href="#features">Features</a>
+                <a href="#workflow">Workflow</a>
+                <a href="/login" class="btn btn-outline">Login</a>
+                <a href="/register" class="btn btn-primary">Get Started</a>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero" id="top">
+            <div class="hero-copy">
+                <p class="eyebrow">Code Protection Platform</p>
+                <h1>Deliver scripts securely with full control over access.</h1>
+                <p class="hero-subtitle">GuardScript helps you protect source code, issue licenses, lock by HWID, and monitor execution activity in real time.</p>
+
+                <div class="hero-btns">
+                    <a href="/register" class="btn btn-primary">Start Protecting</a>
+                    <a href="https://github.com/TheBois-AWS/code_protector" target="_blank" rel="noopener noreferrer" class="btn btn-outline">Documentation</a>
+                </div>
+
+                <div class="stats-row" aria-label="Product highlights">
+                    <div>
+                        <strong>99.9%</strong>
+                        <span>Uptime</span>
+                    </div>
+                    <div>
+                        <strong>50k+</strong>
+                        <span>Scripts Protected</span>
+                    </div>
+                    <div>
+                        <strong>&lt; 1s</strong>
+                        <span>Loader Overhead</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="hero-visual">
+                <div class="binary-logo" aria-hidden="true">
+                    <canvas id="binaryLogo"></canvas>
+                </div>
+
+                <article class="code-window" aria-label="Loader preview">
+                    <div class="window-header">
+                        <div class="dot red"></div>
+                        <div class="dot yellow"></div>
+                        <div class="dot green"></div>
+                        <span class="window-title">secure_loader.py</span>
+                    </div>
+<pre class="mono"><span class="c"># GuardScript: loader snippet</span>
+<span class="k">import</span> requests
+
+<span class="f">def</span> <span class="f">run_secure</span>(license_key):
+    res = requests.get(
+        <span class="s">"https://api.example.com/api/v5/execute"</span>,
+        params={<span class="s">"l"</span>: license_key}
+    )
+    <span class="k">if</span> res.ok:
+        <span class="k">exec</span>(res.text)
+    <span class="k">else</span>:
+        <span class="k">print</span>(<span class="s">"Access denied"</span>)</pre>
+                </article>
+            </div>
+        </section>
+
+        <section id="workflow" class="workflow">
+            <div class="workflow-card">
+                <span>01</span>
+                <h3>Create workspace</h3>
+                <p>Organize projects by team or product line with isolated settings.</p>
+            </div>
+            <div class="workflow-card">
+                <span>02</span>
+                <h3>Publish protected code</h3>
+                <p>Manage entry files, bundle content, and control execution behavior.</p>
+            </div>
+            <div class="workflow-card">
+                <span>03</span>
+                <h3>Control access live</h3>
+                <p>Issue licenses, lock HWID/IP, and revoke access instantly.</p>
+            </div>
+        </section>
+
+        <section id="features" class="features">
+            <article class="feature-card reveal-on-scroll">
+                <div class="icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+                </div>
+                <h3>Smart Licensing</h3>
+                <p>Issue keys with expiration, plan notes, and targeted project binding.</p>
+            </article>
+            <article class="feature-card reveal-on-scroll">
+                <div class="icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
+                </div>
+                <h3>Cloud Loader</h3>
+                <p>Serve encrypted content through remote loaders for secure delivery.</p>
+            </article>
+            <article class="feature-card reveal-on-scroll">
+                <div class="icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                </div>
+                <h3>Workspace Isolation</h3>
+                <p>Separate projects, members, and keys cleanly between clients or teams.</p>
+            </article>
+            <article class="feature-card reveal-on-scroll">
+                <div class="icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                </div>
+                <h3>Execution Analytics</h3>
+                <p>Track successful loads, blocked attempts, and usage behavior over time.</p>
+            </article>
+            <article class="feature-card reveal-on-scroll">
+                <div class="icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
+                </div>
+                <h3>Remote Kill Switch</h3>
+                <p>Disable compromised access paths quickly without redeploying clients.</p>
+            </article>
+            <article class="feature-card reveal-on-scroll">
+                <div class="icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                </div>
+                <h3>Policy Controls</h3>
+                <p>Apply access list rules, PIN protection, and team-based permissions.</p>
+            </article>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; <span id="currentYear"></span> GuardScript. Secure Script Distribution Platform.</p>
+    </footer>
+</body>
+</html>

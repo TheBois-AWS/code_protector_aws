@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register | GuardScript</title>
+  <link rel="icon" type="image/png" href="/assets/anhnen2.png">
+  <link rel="stylesheet" href="/register/style.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script defer src="/register/script.client.js"></script>
+</head>
+<body>
+  <div class="auth-bg" aria-hidden="true"></div>
+  <div class="matrix-backdrop" aria-hidden="true">
+    <canvas id="matrixCanvas"></canvas>
+  </div>
+  <main class="auth-shell">
+    <section class="auth-brand" aria-label="GuardScript intro">
+      <a href="/" class="brand-link">
+        <img src="/assets/anhnen1.png" alt="GuardScript" class="logo-img">
+        <span class="logo-text"><span class="logo-guard">Guard</span><span class="logo-script">Script</span></span>
+      </a>
+      <h1>Create your account.</h1>
+      <p>Start protecting your code with secure loader delivery, licensing, and workspace controls.</p>
+      <ul class="benefits">
+        <li><i data-lucide="shield"></i> Policy-based script access</li>
+        <li><i data-lucide="key-round"></i> License and HWID management</li>
+        <li><i data-lucide="layout-dashboard"></i> Workspace-first operations</li>
+      </ul>
+    </section>
+
+    <section class="auth-card" aria-label="Registration form">
+      <div class="card-head">
+        <h2>Get Started</h2>
+        <p>Create your GuardScript account in a few steps.</p>
+      </div>
+
+      <form id="registerForm" class="auth-form" novalidate>
+        <div class="field-label">
+          <i data-lucide="mail"></i>
+          <label for="email">Email</label>
+        </div>
+        <div class="input-wrap">
+          <input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required>
+        </div>
+
+        <div class="field-label">
+          <i data-lucide="lock"></i>
+          <label for="password">Password</label>
+        </div>
+        <div class="input-wrap">
+          <input id="password" name="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" required>
+        </div>
+
+        <div class="field-label">
+          <i data-lucide="lock-keyhole"></i>
+          <label for="confirmPassword">Confirm Password</label>
+        </div>
+        <div class="input-wrap">
+          <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" placeholder="Re-enter your password" required>
+        </div>
+
+        <button type="submit" class="submit-btn">
+          <span class="btn-text">Create Account</span>
+          <i data-lucide="arrow-right"></i>
+        </button>
+      </form>
+
+      <div id="status" class="status-message" aria-live="polite"></div>
+
+      <p class="auth-foot">
+        Already have an account?
+        <a href="/login">Sign in</a>
+      </p>
+    </section>
+  </main>
+</body>
+</html>

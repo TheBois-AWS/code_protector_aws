@@ -1,0 +1,363 @@
+// IrisAuth Unified Loader - Node.js ECDH Edition
+// Uses Elliptic Curve Diffie-Hellman key exchange for maximum security
+
+(async () => {
+const https = await import('https');
+const http = await import('http');
+const crypto = await import('crypto');
+const os = await import('os');
+const vm = await import('vm');
+const { createRequire } = await import('module');
+const require = createRequire('file://' + process.cwd() + '/script.js');
+
+async function _irisauth() {
+    // =========================================================================
+    // CONTEXT VERIFICATION
+    // =========================================================================
+    const g = global;
+    const workspaceKey = g._k;
+    const origin = g._o;
+    const licenseKey = g.LicenseKey || g._l || '';
+
+    if (!workspaceKey || !origin) {
+        return;
+    }
+
+    // =========================================================================
+    // HARDWARE ID GENERATION
+    // =========================================================================
+    function _generateHwid() {
+        const components = [];
+
+        try {
+            const nets = os.networkInterfaces();
+            for (const name of Object.keys(nets)) {
+                for (const net of nets[name]) {
+                    if (!net.internal && net.mac !== '00:00:00:00:00:00') {
+                        components.push(net.mac);
+                        break;
+                    }
+                }
+                if (components.length > 0) break;
+            }
+        } catch { }
+
+        try {
+            components.push(os.hostname());
+            components.push(os.userInfo().username);
+        } catch {
+            try {
+                components.push(process.env.USERNAME || process.env.USER || '');
+            } catch { }
+        }
+
+        try {
+            components.push(os.arch());
+            const cpus = os.cpus();
+            if (cpus.length > 0) {
+                components.push(cpus[0].model);
+            }
+        } catch { }
+
+        try {
+            components.push(os.platform());
+            components.push(os.release());
+        } catch { }
+
+        let raw = components.filter(Boolean).join('|');
+        if (!raw) {
+            raw = os.hostname() + os.platform();
+        }
+
+        const hash1 = crypto.createHash('sha256').update(raw).digest('hex');
+        const hash2 = crypto.createHash('sha512').update(hash1 + raw).digest('hex');
+        return crypto.createHash('sha256').update(hash2).digest('hex').slice(0, 32);
+    }
+
+    const hwid = _generateHwid();
+    const timestamp = Math.floor(Date.now() / 1000);
+    const platformInfo = `${os.platform()} ${os.release()} ${os.arch()}`;
+
+    // Generate nonce
+    let nonce;
+    try {
+        nonce = crypto.randomBytes(32).toString('hex').slice(0, 16);
+    } catch {
+        nonce = crypto.createHash('sha256')
+            .update(`${Date.now()}:${process.pid}`)
+            .digest('hex').slice(0, 16);
+    }
+
+    // =========================================================================
+    // ECDH KEY GENERATION (X25519)
+    // =========================================================================
+    const clientKeyPair = crypto.generateKeyPairSync('x25519');
+    const clientPublicKey = clientKeyPair.publicKey.export({ type: 'spki', format: 'der' });
+    // X25519 raw public key is last 32 bytes of SPKI
+    const clientPublicRaw = clientPublicKey.slice(-32);
+    const clientPublicB64 = clientPublicRaw.toString('base64');
+
+    // =========================================================================
+    // SIGNED HANDSHAKE REQUEST
+    // =========================================================================
+    const sigData = `${workspaceKey}:${licenseKey}:${hwid}:${timestamp}:${nonce}:${clientPublicB64}`;
+    const signSecret = g._s;
+    if (!signSecret) { console.log('[!] IrisAuth: Missing signing context'); return; }
+    const sigKey = crypto.createHash('sha256')
+        .update(`${signSecret}:${nonce}:${workspaceKey}`)
+        .digest('hex').slice(0, 32);
+    const signature = crypto.createHmac('sha256', sigKey)
+        .update(sigData)
+        .digest('hex').slice(0, 32);
+
+    console.log('[*] IrisAuth: Initializing secure channel...');
+
+    const requestBody = JSON.stringify({
+        id: workspaceKey,
+        l: licenseKey,
+        h: hwid,
+        t: timestamp,
+        s: signature,
+        n: nonce,
+        p: platformInfo,
+        pk: clientPublicB64
+    });
+
+    const parsedUrl = new URL(`${origin}/api/v5/handshake`);
+    const lib = parsedUrl.protocol === 'https:' ? https : http;
+
+    const requestId = crypto.createHash('md5')
+        .update(`${nonce}${timestamp}`)
+        .digest('hex').slice(0, 16);
+
+    const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+        path: parsedUrl.pathname,
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(requestBody),
+            'X-Timestamp': timestamp.toString(),
+            'X-Request-ID': requestId
+        },
+        timeout: 30000
+    };
+
+    return new Promise((resolve, reject) => {
+        const req = lib.request(options, (res) => {
+            let rawData = Buffer.alloc(0);
+            res.on('data', chunk => rawData = Buffer.concat([rawData, chunk]));
+            res.on('end', () => {
+                try {
+                    const contentType = res.headers['content-type'] || '';
+
+                    if (contentType.includes('application/javascript') || contentType.includes('text/x-python')) {
+                        eval(rawData.toString());
+                        resolve();
+                        return;
+                    }
+
+                    if (!contentType.includes('application/json')) {
+                        console.log('[!] IrisAuth: Invalid response format');
+                        resolve();
+                        return;
+                    }
+
+                    const data = JSON.parse(rawData.toString());
+
+                    // =========================================================================
+                    // RESPONSE VERIFICATION
+                    // =========================================================================
+                    const serverPublicB64 = data.pk;
+                    const encB64 = data.e;
+                    const respSig = data.s;
+                    const respTime = data.t;
+
+                    if (!serverPublicB64 || !encB64 || !respSig || !respTime) {
+                        resolve();
+                        return;
+                    }
+
+                    // Verify timestamp freshness
+                    if (Math.abs(Date.now() / 1000 - respTime) > 300) {
+                        console.log('[!] IrisAuth: Response expired');
+                        resolve();
+                        return;
+                    }
+
+                    // Verify response signature
+                    const verifyData = `${serverPublicB64}:${encB64}:${respTime}`;
+                    const verifyKey = crypto.createHash('sha256')
+                        .update(`${signSecret}:${nonce}:${hwid}`)
+                        .digest('hex').slice(0, 32);
+                    const expectedSig = crypto.createHmac('sha256', verifyKey)
+                        .update(verifyData)
+                        .digest('hex').slice(0, 32);
+
+                    if (respSig !== expectedSig) {
+                        console.log('[!] IrisAuth: Verification failed');
+                        resolve();
+                        return;
+                    }
+
+                    // =========================================================================
+                    // ECDH SHARED SECRET DERIVATION
+                    // =========================================================================
+                    const serverPublicRaw = Buffer.from(serverPublicB64, 'base64');
+                    
+                    // Create server public key from raw bytes
+                    const serverPublicKey = crypto.createPublicKey({
+                        key: Buffer.concat([
+                            // X25519 SPKI header
+                            Buffer.from('302a300506032b656e032100', 'hex'),
+                            serverPublicRaw
+                        ]),
+                        format: 'der',
+                        type: 'spki'
+                    });
+
+                    // Compute shared secret
+                    const sharedSecret = crypto.diffieHellman({
+                        privateKey: clientKeyPair.privateKey,
+                        publicKey: serverPublicKey
+                    });
+
+                    // Derive AES key using HKDF
+                    const aesKey = crypto.hkdfSync(
+                        'sha256',
+                        sharedSecret,
+                        Buffer.from('IrisAuth-Salt'),
+                        Buffer.from(`IrisAuth-${nonce}`),
+                        32
+                    );
+
+                    // =========================================================================
+                    // AES-GCM DECRYPTION
+                    // =========================================================================
+                    const encrypted = Buffer.from(encB64, 'base64');
+                    const iv = encrypted.slice(0, 12);
+                    const ciphertext = encrypted.slice(12, -16);
+                    const authTag = encrypted.slice(-16);
+
+                    const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, iv);
+                    decipher.setAuthTag(authTag);
+                    
+                    const decrypted = Buffer.concat([
+                        decipher.update(ciphertext),
+                        decipher.final()
+                    ]);
+
+                    console.log('[*] IrisAuth: Launching...');
+
+                    // Execute directly in global context
+                    const scriptCode = decrypted.toString('utf-8');
+                    
+                    const sandbox = {
+                        require,
+                        console,
+                        process,
+                        Buffer,
+                        setTimeout,
+                        setInterval,
+                        clearTimeout,
+                        clearInterval,
+                        setImmediate,
+                        clearImmediate,
+                        __dirname: process.cwd(),
+                        __filename: 'script.js',
+                        module: { exports: {} },
+                        exports: {},
+                        global: g,
+                        __name__: '__main__'
+                    };
+
+                    for (const k of Object.keys(g)) {
+                        if (!k.startsWith('_') && !(k in sandbox)) {
+                            sandbox[k] = g[k];
+                        }
+                    }
+
+                    vm.createContext(sandbox);
+
+                    // Multi-file manifest detection
+                    if (scriptCode.trim().startsWith('{') && scriptCode.includes('"files"')) {
+                        try {
+                            const manifest = JSON.parse(scriptCode);
+                            const files = manifest.files || {};
+                            const entryPoint = manifest.entry_point || 'main.js';
+
+                            // Install custom require for bundled modules
+                            const path = require('path');
+                            const Module = require('module');
+                            const originalResolve = Module._resolveFilename;
+
+                            const fileKeys = Object.keys(files);
+                            const bundledModules = {};
+                            fileKeys.forEach(fpath => {
+                                const modName = fpath.replace(/\.js$/, '');
+                                bundledModules[modName] = files[fpath];
+                                bundledModules[fpath] = files[fpath];
+                                bundledModules['./' + modName] = files[fpath];
+                                bundledModules['./' + fpath] = files[fpath];
+                            });
+
+                            const origRequire = sandbox.require;
+                            sandbox.require = function(id) {
+                                if (bundledModules[id] !== undefined) {
+                                    const mod = { exports: {} };
+                                    const wrappedCode = `(function(exports, require, module, __filename, __dirname) { ${bundledModules[id]} })`;
+                                    const fn = vm.runInContext(wrappedCode, sandbox, { filename: id });
+                                    fn(mod.exports, sandbox.require, mod, id, path.dirname(id));
+                                    return mod.exports;
+                                }
+                                return origRequire(id);
+                            };
+
+                            const entryCode = files[entryPoint] || '';
+                            if (entryCode) {
+                                vm.runInContext(entryCode, sandbox, { filename: entryPoint });
+                            } else {
+                                console.log(`[!] IrisAuth: Entry point '${entryPoint}' not found in bundle`);
+                            }
+                        } catch (manifestErr) {
+                            console.log('[!] IrisAuth: Invalid manifest -', manifestErr.message);
+                        }
+                    } else {
+                        vm.runInContext(scriptCode, sandbox, { filename: '<protected>' });
+                    }
+
+                    resolve();
+                } catch (e) {
+                    console.log('[!] IrisAuth: Error -', e.message);
+                    console.error(e);
+                    resolve();
+                }
+            });
+        });
+
+        req.on('error', (e) => {
+            console.log('[!] IrisAuth: Connection error -', e.message);
+            resolve();
+        });
+
+        req.on('timeout', () => {
+            req.destroy();
+            console.log('[!] IrisAuth: Connection timeout');
+            resolve();
+        });
+
+        req.write(requestBody);
+        req.end();
+    });
+}
+
+// Auto-execute
+try {
+    await _irisauth();
+} catch (e) {
+    console.log('[!] IrisAuth: Error -', e.message);
+} finally {
+    try { delete globalThis._irisauth; } catch { }
+}
+})();

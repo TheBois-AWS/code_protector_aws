@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login | GuardScript</title>
+  <link rel="icon" type="image/png" href="/assets/anhnen2.png">
+  <link rel="stylesheet" href="/login/style.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script defer src="/login/script.client.js"></script>
+</head>
+<body>
+  <div class="auth-bg" aria-hidden="true"></div>
+  <div class="matrix-backdrop" aria-hidden="true">
+    <canvas id="matrixCanvas"></canvas>
+  </div>
+  <main class="auth-shell">
+    <section class="auth-brand" aria-label="GuardScript intro">
+      <a href="/" class="brand-link">
+        <img src="/assets/anhnen1.png" alt="GuardScript" class="logo-img">
+        <span class="logo-text"><span class="logo-guard">Guard</span><span class="logo-script">Script</span></span>
+      </a>
+      <h1>Welcome back.</h1>
+      <p>Sign in to continue managing workspaces, licenses, and execution policies.</p>
+      <ul class="benefits">
+        <li><i data-lucide="shield-check"></i> Secure loader distribution</li>
+        <li><i data-lucide="activity"></i> Real-time execution visibility</li>
+        <li><i data-lucide="users"></i> Team-based workspace access</li>
+      </ul>
+    </section>
+
+    <section class="auth-card" aria-label="Login form">
+      <div class="card-head">
+        <h2>Sign In</h2>
+        <p>Use your account credentials to access the dashboard.</p>
+      </div>
+
+      <form id="loginForm" class="auth-form" novalidate>
+        <div class="field-label">
+          <i data-lucide="mail"></i>
+          <label for="email">Email</label>
+        </div>
+        <div class="input-wrap">
+          <input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required>
+        </div>
+
+        <div class="field-label">
+          <i data-lucide="lock"></i>
+          <label for="password">Password</label>
+        </div>
+        <div class="input-wrap">
+          <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required>
+        </div>
+
+        <button type="submit" class="submit-btn">
+          <span class="btn-text">Sign In</span>
+          <i data-lucide="arrow-right"></i>
+        </button>
+      </form>
+
+      <div id="status" class="status-message" aria-live="polite"></div>
+
+      <p class="auth-foot">
+        New to GuardScript?
+        <a href="/register">Get Started</a>
+      </p>
+    </section>
+  </main>
+</body>
+</html>
