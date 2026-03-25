@@ -181,13 +181,13 @@ jobs:
           aws cloudformation list-change-sets \
             --stack-name "${STACK_NAME}" \
             --region "${AWS_REGION}" \
-            --query "Summaries[0:10].[ChangeSetName,Status,ExecutionStatus,CreationTime,StatusReason]" \
+            --query "reverse(sort_by(Summaries,&CreationTime))[0:10].[ChangeSetName,Status,ExecutionStatus,CreationTime,StatusReason]" \
             --output table || true
 
           CHANGE_SET_NAME="$(aws cloudformation list-change-sets \
             --stack-name "${STACK_NAME}" \
             --region "${AWS_REGION}" \
-            --query "Summaries[0].ChangeSetName" \
+            --query "reverse(sort_by(Summaries,&CreationTime))[0].ChangeSetName" \
             --output text 2>/dev/null)"
 
           if [ -n "${CHANGE_SET_NAME}" ] && [ "${CHANGE_SET_NAME}" != "None" ]; then
