@@ -47,6 +47,7 @@ jobs:
       LAMBDA_MEMORY_SIZE: ${{ vars.LAMBDA_MEMORY_SIZE || '1024' }}
       LAMBDA_TIMEOUT: ${{ vars.LAMBDA_TIMEOUT || '30' }}
       LAMBDA_LOG_RETENTION_DAYS: ${{ vars.LAMBDA_LOG_RETENTION_DAYS || '30' }}
+      MANAGE_API_LOG_GROUP: ${{ vars.MANAGE_API_LOG_GROUP || 'false' }}
       ENABLE_CLOUDWATCH_ALARMS: ${{ vars.ENABLE_CLOUDWATCH_ALARMS || 'true' }}
     steps:
       - name: Checkout
@@ -126,6 +127,7 @@ jobs:
             "LambdaMemorySize=${LAMBDA_MEMORY_SIZE}"
             "LambdaTimeout=${LAMBDA_TIMEOUT}"
             "LambdaLogRetentionDays=${LAMBDA_LOG_RETENTION_DAYS}"
+            "ManageApiLogGroup=${MANAGE_API_LOG_GROUP}"
             "EnableCloudWatchAlarms=${ENABLE_CLOUDWATCH_ALARMS}"
           )
 

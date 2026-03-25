@@ -119,6 +119,7 @@ Recommended repository variables:
 - `LAMBDA_MEMORY_SIZE` (default `1024`)
 - `LAMBDA_TIMEOUT` (default `30`)
 - `LAMBDA_LOG_RETENTION_DAYS` (default `30`)
+- `MANAGE_API_LOG_GROUP` (default `false`; set `true` only when Lambda log group does not already exist)
 - `ENABLE_CLOUDWATCH_ALARMS` (default `true`)
 
 ### 2) Configure IAM OIDC Trust
@@ -176,4 +177,5 @@ git push -u origin main
 - GSIs are defined for loader key, owner workspace listing, project secret key, license key, invitation token, and workspace-scoped queries.
 - No SQLite and no WebSocket dependency in this rewrite.
 - CloudWatch log retention is managed by template parameter `LambdaLogRetentionDays` via `ApiFunctionLogGroup`.
+- To avoid update failures on existing stacks, `ApiFunctionLogGroup` creation is controlled by `ManageApiLogGroup` (default `false`).
 - CloudWatch monitoring can be toggled by template parameter `EnableCloudWatchAlarms` (dashboard + alarms for errors/throttles/p95 duration).

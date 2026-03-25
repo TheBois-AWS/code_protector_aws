@@ -51,6 +51,12 @@ Parameters:
       - 2922
       - 3288
       - 3653
+  ManageApiLogGroup:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
   EnableCloudWatchAlarms:
     Type: String
     Default: 'true'
@@ -60,6 +66,7 @@ Parameters:
 
 Conditions:
   HasFrontendBucketName: !Not [!Equals [!Ref FrontendBucketName, '']]
+  CreateApiFunctionLogGroup: !Equals [!Ref ManageApiLogGroup, 'true']
   HasCloudWatchAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
 
 Resources:
@@ -201,6 +208,7 @@ Resources:
 
   ApiFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    Condition: CreateApiFunctionLogGroup
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -860,6 +868,7 @@ Outputs:
   ApiFunctionUrl:
     Value: !GetAtt ApiFunctionUrl.FunctionUrl
   ApiFunctionLogGroupName:
+    Condition: CreateApiFunctionLogGroup
     Value: !Ref ApiFunctionLogGroup
   ApiErrorsAlarmName:
     Condition: HasCloudWatchAlarms
