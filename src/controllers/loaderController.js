@@ -18,18 +18,22 @@ import {
 } from '../utils/crypto.js';
 import { resolveWorkspace } from '../utils/workspace.js';
 import { logAction } from './workspaceController.js';
-import { generateJsBundle, generatePyBundle, resolveFileContent } from './fileController.js';
+import { generateJsBundle, generateLuaBundle, generatePyBundle, resolveFileContent } from './fileController.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
 let unifiedLoaderPy = '';
 let unifiedLoaderJs = '';
+let unifiedLoaderLua = '';
 try {
   unifiedLoaderPy = readFileSync(join(rootDir, 'templates', 'python', 'unified-loader.py'), 'utf-8');
 } catch {}
 try {
   unifiedLoaderJs = readFileSync(join(rootDir, 'templates', 'javascript_nodejs', 'unified-loader.txt'), 'utf-8');
+} catch {}
+try {
+  unifiedLoaderLua = readFileSync(join(rootDir, 'templates', 'lua', 'unified-loader.lua'), 'utf-8');
 } catch {}
 
 const LOADER_SECRET_KEY = 'loader_encrypt_secret';
@@ -60,6 +64,10 @@ function errorJs(message, statusCode = 403) {
   return textResponse(statusCode, `console.error('[code_protector_aws] ${message}');`, { 'content-type': 'application/javascript; charset=utf-8' });
 }
 
+function errorLua(message, statusCode = 403) {
+  return textResponse(statusCode, `print('[code_protector_aws] ${message}')`, { 'content-type': 'text/x-lua; charset=utf-8' });
+}
+
 function generateBanner(name, comment = '#') {
   const safeName = String(name || 'code_protector_aws').slice(0, 48);
   const line = `${comment} ============================================================`;
@@ -67,9 +75,8 @@ function generateBanner(name, comment = '#') {
 }
 
 function browserLoaderPage({ type, codeSnippet, id }) {
-  const isPython = type === 'python';
-  const title = isPython ? 'Python Loader' : 'Node.js Loader';
-  const fileName = isPython ? 'main.py' : 'main.js';
+  const title = type === 'python' ? 'Python Loader' : type === 'lua' ? 'Lua Loader' : 'Node.js Loader';
+  const fileName = type === 'python' ? 'main.py' : type === 'lua' ? 'main.lua' : 'main.js';
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font-family:system-ui;background:#09090b;color:#fff;padding:24px}pre{background:#111;padding:16px;border-radius:10px;overflow:auto}button{background:#2563eb;color:white;border:0;padding:8px 12px;border-radius:8px;cursor:pointer}</style></head><body><h1>${title}</h1><p>Loader ID: <code>${id}</code></p><p>Create <code>${fileName}</code> and run it.</p><pre id="code">${String(codeSnippet).replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre><button onclick="navigator.clipboard.writeText(document.getElementById('code').textContent)">Copy</button></body></html>`;
 }
 
@@ -151,9 +158,13 @@ async function resolveScriptContent(id, licenseKey) {
       if (String(file.id) === String(entry.id)) entryPath = path;
     }
 
-    const bundle = String(workspace.language || '').toLowerCase() === 'nodejs'
+    const workspaceLanguage = String(workspace.language || '').toLowerCase();
+    const jsLanguages = new Set(['node', 'nodejs', 'javascript', 'javascript_nodejs', 'userscript']);
+    const bundle = jsLanguages.has(workspaceLanguage)
       ? generateJsBundle(fileContents, entryPath)
-      : generatePyBundle(fileContents, entryPath);
+      : workspaceLanguage === 'lua'
+        ? generateLuaBundle(fileContents, entryPath)
+        : generatePyBundle(fileContents, entryPath);
 
     return { workspace, project, finalContent: bundle };
   }
@@ -279,6 +290,35 @@ export async function getUnifiedLoaderJS(request, id) {
   const banner = generateBanner(resolved.workspace?.name || resolved.project?.name || 'code_protector_aws', '//');
   return textResponse(200, `${banner}${context}${clean}`, {
     'content-type': 'application/javascript; charset=utf-8',
+    'cache-control': 'no-store, no-cache, must-revalidate',
+    'access-control-allow-origin': '*'
+  });
+}
+
+export async function getUnifiedLoaderLua(request, id) {
+  if (!id) return textResponse(404, 'Not Found', { 'content-type': 'text/plain; charset=utf-8' });
+
+  const origin = getOrigin(request);
+  const accept = safeHeader(request, 'accept');
+  const isBrowser = accept.includes('text/html');
+  const resolved = await resolveProjectByIdentifier(id);
+  if (!resolved.workspace && !resolved.project) {
+    return textResponse(404, '-- Invalid loader ID', { 'content-type': 'text/x-lua; charset=utf-8' });
+  }
+
+  if (isBrowser) {
+    const snippet = `-- IrisAuth Loader v4 (Roblox)\ngetgenv().LicenseKey = "..."\nloadstring(game:HttpGet("${origin}/files/${id}.lua"))()`;
+    return textResponse(200, browserLoaderPage({ type: 'lua', codeSnippet: snippet, id }), { 'content-type': 'text/html; charset=utf-8' });
+  }
+
+  if (!unifiedLoaderLua) return errorLua('Lua loader template missing', 500);
+
+  const loaderSecret = await getOrCreateLoaderSecret();
+  const signKey = sha256(`${loaderSecret}:loader:${id}`).slice(0, 32);
+  const context = `_k='${id}'\n_o='${origin}'\n_s='${signKey}'\nLicenseKey = LicenseKey or _l or ''\n`;
+  const banner = generateBanner(resolved.workspace?.name || resolved.project?.name || 'code_protector_aws', '--');
+  return textResponse(200, `${banner}${context}${String(unifiedLoaderLua)}`, {
+    'content-type': 'text/x-lua; charset=utf-8',
     'cache-control': 'no-store, no-cache, must-revalidate',
     'access-control-allow-origin': '*'
   });

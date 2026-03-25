@@ -96,6 +96,7 @@ const routes = [
   // Loaders
   { method: 'GET', path: '/files/:id.py', handler: (req, params) => loaderController.getUnifiedLoader(req, params.id) },
   { method: 'GET', path: '/files/:id.js', handler: (req, params) => loaderController.getUnifiedLoaderJS(req, params.id) },
+  { method: 'GET', path: '/files/:id.lua', handler: (req, params) => loaderController.getUnifiedLoaderLua(req, params.id) },
   { method: 'GET', path: '/api/v5/execute', handler: (req) => loaderController.executeScript(req) },
   { method: 'POST', path: '/api/v5/handshake', handler: (req) => loaderController.ecdhHandshake(req) }
 ];

@@ -139,7 +139,7 @@ export async function createWorkspace(request) {
     return jsonResponse(429, { success: false, error: 'Rate limited' }, { 'retry-after': String(rateLimit.retryAfterSeconds) });
   }
 
-  const language = ['python', 'nodejs', 'userscript'].includes(String(payload.language || '').toLowerCase())
+  const language = ['python', 'nodejs', 'userscript', 'lua'].includes(String(payload.language || '').toLowerCase())
     ? String(payload.language).toLowerCase()
     : (String(payload.language).toLowerCase() === 'javascript' ? 'nodejs' : 'python');
 

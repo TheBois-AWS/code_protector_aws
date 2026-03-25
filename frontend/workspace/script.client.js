@@ -1827,9 +1827,10 @@ function updateProjectInfoSidebar(script) {
         : '<span class="text-gray-500 flex items-center gap-1"><i data-lucide="power-off" class="w-3 h-3"></i> Disabled</span>';
 
     // Keys & URLs
+    const loaderExt = getLoaderExtensionByWorkspaceLanguage(workspaceData?.language);
     document.getElementById('sidebar-secret-key').textContent = script.secret_key;
-    document.getElementById('sidebar-loader-url').textContent = `/files/${script.secret_key}.py`;
-    document.getElementById('sidebar-workspace-url').textContent = workspaceData?.loader_key ? `/files/${workspaceData.loader_key}.py` : '-';
+    document.getElementById('sidebar-loader-url').textContent = `/files/${script.secret_key}.${loaderExt}`;
+    document.getElementById('sidebar-workspace-url').textContent = workspaceData?.loader_key ? `/files/${workspaceData.loader_key}.${loaderExt}` : '-';
 
     // Timestamps
     const createdDate = new Date(script.created_at);
@@ -1871,6 +1872,17 @@ function formatFileSize(bytes) {
     const sizes = ['bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function getLoaderExtensionByWorkspaceLanguage(language) {
+    const lang = String(language || 'python').toLowerCase();
+    if (lang === 'node' || lang === 'nodejs' || lang === 'javascript' || lang === 'javascript_nodejs' || lang === 'userscript') {
+        return 'js';
+    }
+    if (lang === 'lua') {
+        return 'lua';
+    }
+    return 'py';
 }
 
 async function saveCurrentFile() {
@@ -2521,13 +2533,17 @@ function showLoaderCode() {
         code = `# IrisAuth Loader v4
 LicenseKey = ""  # Optional - delete if not needed
 exec(__import__('urllib.request',fromlist=['urlopen']).urlopen("${host}/files/${key}.py").read())`;
-    } else if (lang === 'node' || lang === 'nodejs' || lang === 'javascript' || lang === 'javascript_nodejs') {
+    } else if (lang === 'lua') {
+        code = `-- IrisAuth Loader v4 (Roblox)
+getgenv().LicenseKey = "..."
+loadstring(game:HttpGet("${host}/files/${key}.lua"))()`;
+    } else if (lang === 'node' || lang === 'nodejs' || lang === 'javascript' || lang === 'javascript_nodejs' || lang === 'userscript') {
         code = `// IrisAuth Loader v4
 globalThis.LicenseKey = "";  // Optional - delete if not needed
 import('https').then(m=>m.get("${host}/files/${key}.js",r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>eval(d))}));`;
     } else {
         code = `# IrisAuth Loader (${lang}) - Template not available
-# Supported: Python, Node.js
+# Supported: Python, Node.js, Lua
 LicenseKey = ""`;
     }
 

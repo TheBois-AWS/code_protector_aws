@@ -535,6 +535,23 @@ export function generateJsBundle(fileContents, entryPath) {
   return `// Auto-generated bundle by code_protector_aws\n(function() {\n  const _MODULES = {};\n${modules}  const _CACHE = {};\n  const _nativeRequire = typeof require !== 'undefined' ? require : null;\n  function _require(name) {\n    const normalized = name.replace(/^\\.\\//, '').replace(/\\.js$/, '');\n    if (_CACHE[normalized]) return _CACHE[normalized].exports;\n    if (!_MODULES[normalized]) {\n      if (_nativeRequire) return _nativeRequire(name);\n      throw new Error('Module not found: ' + name);\n    }\n    const module = { exports: {} };\n    _CACHE[normalized] = module;\n    _MODULES[normalized](module, module.exports, _require);\n    return module.exports;\n  }\n  (function(require) {\n${entryCode.split('\n').map((line) => `    ${line}`).join('\n')}\n  })(_require);\n})();\n`;
 }
 
+export function generateLuaBundle(fileContents, entryPath) {
+  let modules = '';
+  let entryCode = '';
+  for (const [path, content] of Object.entries(fileContents)) {
+    if (path === entryPath) {
+      entryCode = String(content);
+      continue;
+    }
+    const moduleName = path
+      .replace(/\.lua$/i, '')
+      .replace(/\/init$/i, '')
+      .replace(/\//g, '.');
+    modules += `package.preload[${JSON.stringify(moduleName)}] = function(...)\n${String(content).split('\n').map((line) => `  ${line}`).join('\n')}\nend\n\n`;
+  }
+  return `-- Auto-generated bundle by code_protector_aws\n${modules}do\n${entryCode.split('\n').map((line) => `  ${line}`).join('\n')}\nend\n`;
+}
+
 export async function generateBundle(request, projectIdentifier) {
   const userId = await getUserIdFromRequest(request);
   if (!userId) return unauthorized();
@@ -556,6 +573,12 @@ export async function generateBundle(request, projectIdentifier) {
     if (String(file.id) === String(entry.id)) entryPath = path;
   }
   const workspace = await resolveWorkspace(String(access.workspaceId));
-  const bundle = workspace?.language === 'nodejs' ? generateJsBundle(fileContents, entryPath) : generatePyBundle(fileContents, entryPath);
+  const workspaceLanguage = String(workspace?.language || '').toLowerCase();
+  const jsLanguages = new Set(['node', 'nodejs', 'javascript', 'javascript_nodejs', 'userscript']);
+  const bundle = jsLanguages.has(workspaceLanguage)
+    ? generateJsBundle(fileContents, entryPath)
+    : workspaceLanguage === 'lua'
+      ? generateLuaBundle(fileContents, entryPath)
+      : generatePyBundle(fileContents, entryPath);
   return jsonResponse(200, { success: true, bundle, entry: entryPath, file_count: files.length });
 }

@@ -19,6 +19,7 @@ function detectLanguage(filename) {
   const extension = String(filename).split('.').pop().toLowerCase();
   const map = {
     py: 'python',
+    lua: 'lua',
     js: 'javascript',
     ts: 'typescript',
     json: 'json',
@@ -31,6 +32,17 @@ function detectLanguage(filename) {
     sh: 'shell'
   };
   return map[extension] || 'plaintext';
+}
+
+function getWorkspaceScriptPreset(workspaceLanguage) {
+  const normalized = String(workspaceLanguage || '').toLowerCase();
+  if (normalized === 'nodejs' || normalized === 'userscript' || normalized === 'javascript' || normalized === 'javascript_nodejs') {
+    return { language: 'javascript', extension: 'js' };
+  }
+  if (normalized === 'lua') {
+    return { language: 'lua', extension: 'lua' };
+  }
+  return { language: 'python', extension: 'py' };
 }
 
 async function resolveProject(projectIdentifier) {
@@ -53,7 +65,8 @@ async function storeProjectContent(project, workspace, content) {
     body = encryptAES(compressed, workspace.encryption_key);
     isEncrypted = 1;
   }
-  const key = `${project.secret_key}.py.gz`;
+  const preset = getWorkspaceScriptPreset(workspace?.language);
+  const key = `${project.secret_key}.${preset.extension}.gz`;
   await storage.put(key, body);
   return { contentReference: `r2:${key}`, isEncrypted, compressedSize: Buffer.byteLength(body, 'utf-8') };
 }
@@ -96,18 +109,17 @@ export async function createProject(request, workspaceIdentifier) {
   project.is_encrypted = stored.isEncrypted;
   await projectsRepo.create(project);
 
-  const language = workspace.language === 'nodejs' ? 'javascript' : 'python';
-  const extension = workspace.language === 'nodejs' ? 'js' : 'py';
+  const preset = getWorkspaceScriptPreset(workspace.language);
   await projectFilesRepo.create({
     id: randomId(),
     project_id: project.id,
     parent_id: undefined,
-    name: `main.${extension}`,
+    name: `main.${preset.extension}`,
     type: 'file',
     content: stored.contentReference,
     is_encrypted: stored.isEncrypted,
     size: Buffer.byteLength(String(payload.content), 'utf-8'),
-    language,
+    language: preset.language,
     sort_order: 0,
     is_entry_point: 1,
     created_at: nowIso(),
