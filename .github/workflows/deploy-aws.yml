@@ -248,7 +248,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          aws s3 sync frontend/ "s3://${{ steps.stack_outputs.outputs.frontend_bucket }}" --delete --region "${AWS_REGION}"
+          # Keep non-frontend objects in the same bucket (project/file content is stored here).
+          aws s3 sync frontend/ "s3://${{ steps.stack_outputs.outputs.frontend_bucket }}" --region "${AWS_REGION}"
 
       - name: Invalidate CloudFront Cache
         shell: bash
