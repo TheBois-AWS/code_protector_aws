@@ -338,6 +338,10 @@ let monacoModels = new Map();  // Cache: fileId -> monaco.editor.ITextModel
 let draggedFileId = null;      // Currently dragged file ID
 let selectedFileIds = new Set(); // Multi-select: set of selected file IDs
 let lastClickedFileId = null;  // For shift+click range selection
+let closedTabHistory = [];     // Recently closed tabs (for reopen)
+let autoSaveTimers = new Map(); // fileId -> timeout id
+let autoSaveInFlight = new Set(); // fileId currently autosaving
+let lastSavedContent = new Map(); // fileId -> latest saved content
 let currentUserRole = 'viewer'; // Current user's role in this workspace
 let isLoadingWorkspace = false; // Lock to prevent multiple simultaneous loads
 let pinVerified = false; // Track if PIN was already verified this session
@@ -355,6 +359,8 @@ const PANEL_STATE_KEYS = {
     settingsHeight: `workspace:${workspaceIdentifier}:settingsPanelHeight`,
     detailsWidth: `workspace:${workspaceIdentifier}:detailsPanelWidth`
 };
+const TAB_HISTORY_LIMIT = 20;
+const AUTOSAVE_DELAY_MS = 1500;
 
 function setWorkspaceNetworkBanner(visible, message) {
     const banner = document.getElementById('networkStatusBanner');
@@ -491,6 +497,131 @@ function scheduleRealtimeRefresh(key, callback, delay = 300) {
     realtimeRefreshTimers.set(key, nextTimer);
 }
 
+function normalizeFileId(fileId) {
+    return String(fileId ?? '');
+}
+
+function findProjectFileById(fileId) {
+    const normalized = normalizeFileId(fileId);
+    return projectFiles.find((file) => normalizeFileId(file.id) === normalized);
+}
+
+function findOpenTab(fileId) {
+    const normalized = normalizeFileId(fileId);
+    return openTabs.find((tab) => normalizeFileId(tab.fileId) === normalized);
+}
+
+function hasUnsavedTabs() {
+    return openTabs.some((tab) => Boolean(tab.modified));
+}
+
+function updateTreeModifiedIndicator(fileId, modified) {
+    const normalized = normalizeFileId(fileId);
+    const treeNode = document.querySelector(`.file-tree-node[data-file-id="${normalized}"]`);
+    if (!treeNode) return;
+
+    const existingDot = treeNode.querySelector('.tree-modified-dot');
+    if (modified && !existingDot) {
+        const dot = document.createElement('span');
+        dot.className = 'tree-modified-dot';
+        const nameSpan = treeNode.querySelector('.file-node-name');
+        if (nameSpan) nameSpan.after(dot);
+    } else if (!modified && existingDot) {
+        existingDot.remove();
+    }
+}
+
+function setTabModifiedState(fileId, modified) {
+    const tab = findOpenTab(fileId);
+    if (!tab || tab.modified === modified) return;
+    tab.modified = modified;
+    renderTabs();
+    updateTreeModifiedIndicator(fileId, modified);
+}
+
+function clearAutoSaveTimer(fileId) {
+    const normalized = normalizeFileId(fileId);
+    const timer = autoSaveTimers.get(normalized);
+    if (timer) {
+        clearTimeout(timer);
+        autoSaveTimers.delete(normalized);
+    }
+}
+
+function scheduleAutoSave(fileId) {
+    const normalized = normalizeFileId(fileId);
+    const tab = findOpenTab(normalized);
+    if (!tab?.modified) return;
+
+    clearAutoSaveTimer(normalized);
+    const timer = setTimeout(async () => {
+        autoSaveTimers.delete(normalized);
+        if (autoSaveInFlight.has(normalized)) return;
+        if (!findOpenTab(normalized)?.modified) return;
+
+        autoSaveInFlight.add(normalized);
+        const statusEl = document.getElementById('saveStatus');
+        if (statusEl) statusEl.textContent = 'Autosaving...';
+        const ok = await saveFileById(normalized, { silent: true });
+        if (statusEl && findOpenTab(normalized)) {
+            statusEl.textContent = ok ? 'Autosaved' : 'Autosave failed';
+            setTimeout(() => {
+                if (statusEl.textContent === 'Autosaved' || statusEl.textContent === 'Autosave failed') {
+                    statusEl.textContent = '';
+                }
+            }, 1500);
+        }
+        autoSaveInFlight.delete(normalized);
+    }, AUTOSAVE_DELAY_MS);
+
+    autoSaveTimers.set(normalized, timer);
+}
+
+function rememberClosedTab(tab) {
+    if (!tab?.fileId) return;
+    closedTabHistory = closedTabHistory.filter((item) => normalizeFileId(item.fileId) !== normalizeFileId(tab.fileId));
+    closedTabHistory.push({
+        fileId: normalizeFileId(tab.fileId),
+        name: tab.name,
+        language: tab.language
+    });
+    if (closedTabHistory.length > TAB_HISTORY_LIMIT) {
+        closedTabHistory = closedTabHistory.slice(-TAB_HISTORY_LIMIT);
+    }
+}
+
+async function saveAllOpenTabs({ silent = false } = {}) {
+    const dirtyTabs = openTabs.filter((tab) => tab.modified);
+    if (!dirtyTabs.length) return true;
+
+    let successCount = 0;
+    for (const tab of dirtyTabs) {
+        const ok = await saveFileById(tab.fileId, { silent: true });
+        if (ok) successCount += 1;
+    }
+
+    const allSaved = successCount === dirtyTabs.length;
+    if (!silent) {
+        if (allSaved) showToast('Saved', `Saved ${successCount} file(s)`, 'success');
+        else showToast('Warning', `Saved ${successCount}/${dirtyTabs.length} file(s)`, 'warning');
+    }
+    return allSaved;
+}
+
+function reopenLastClosedTab() {
+    const last = closedTabHistory.pop();
+    if (!last) {
+        showToast('Info', 'No recently closed tab', 'info');
+        return;
+    }
+    const file = findProjectFileById(last.fileId);
+    if (!file || file.type !== 'file') {
+        showToast('Info', 'Closed file is no longer available', 'info');
+        return;
+    }
+    openFileInTab(last.fileId, file.name || last.name);
+}
+
 async function getWorkspaceWsEndpoint() {
     if (workspaceWsEndpoint !== null) return workspaceWsEndpoint;
     workspaceWsEndpoint = '';
@@ -570,22 +701,7 @@ async function refreshCurrentProjectFileTree() {
     if (!project?.id) return;
 
     try {
-        const res = await fetch(`/api/projects/${project.id}/files`, {
-            headers: { 'Authorization': token }
-        });
-        const data = await res.json();
-        if (!data.success) return;
-
-        projectFiles = data.files || [];
-        fileTree = buildFileTree(projectFiles);
-        renderFileTree();
-
-        const availableIds = new Set(projectFiles.map((file) => String(file.id)));
-        openTabs = openTabs.filter((tab) => availableIds.has(String(tab.fileId)));
-        if (activeFileId && !availableIds.has(String(activeFileId))) {
-            activeFileId = null;
-        }
-        renderTabs();
+        await loadFileTree(project.id, { autoOpen: false, preserveTabs: true });
     } catch (error) {
         console.error('Failed to refresh file tree from realtime event', error);
     }
@@ -764,8 +880,7 @@ require(['vs/editor/editor.main'], function () {
 
     loadWorkspaceData();
 
-    // Set initial view from URL after data loads
-    setTimeout(() => {
+    const applyInitialRouteFromUrl = () => {
         let view = validViews.includes(initialView) ? initialView : 'projects';
 
         // If accessing /editor with a project ID, open that project
@@ -802,7 +917,13 @@ require(['vs/editor/editor.main'], function () {
         } else {
             switchView(view, false); // false = don't push to history (already in URL)
         }
-    }, 100);
+    };
+
+    const waitForWorkspaceLoad = setInterval(() => {
+        if (isLoadingWorkspace) return;
+        clearInterval(waitForWorkspaceLoad);
+        applyInitialRouteFromUrl();
+    }, 50);
 });
 
 // Handle browser back/forward
@@ -874,6 +995,40 @@ function switchView(viewName, updateHistory = true) {
     if (viewName === 'logs') loadLogs();
     if (viewName === 'team') loadTeam();
     if (viewName === 'settings') loadSettings();
+}
+
+function refreshActiveViewAfterWorkspaceLoad() {
+    const activePanel = document.querySelector('.view-panel.active');
+    if (!activePanel?.id) return;
+
+    const viewName = activePanel.id.replace('view-', '');
+    if (viewName === 'overview') {
+        requestAnimationFrame(() => updateOverviewStats());
+        return;
+    }
+    if (viewName === 'projects') {
+        renderProjectsGrid();
+        return;
+    }
+    if (viewName === 'licenses') {
+        loadLicenses(false, true);
+        return;
+    }
+    if (viewName === 'access') {
+        loadAccessList(false, true);
+        return;
+    }
+    if (viewName === 'logs') {
+        loadLogs(false, true);
+        return;
+    }
+    if (viewName === 'team') {
+        loadTeam();
+        return;
+    }
+    if (viewName === 'settings') {
+        loadSettings();
+    }
 }
 
 async function updateOverviewStats() {
@@ -948,6 +1103,7 @@ async function loadWorkspaceData() {
         if (!data.success) throw new Error(data.error);
 
         workspaceData = data.workspace;
+        currentUserRole = data.userRole || currentUserRole || 'viewer';
         document.getElementById('workspaceName').textContent = data.workspace.name;
         document.getElementById('workspaceIdDisplay').textContent = `ID: ${data.workspace.loader_key}`;
 
@@ -988,6 +1144,9 @@ async function loadWorkspaceData() {
                 loadLogs(false)
             ]).catch(() => { }); // Silently fail
         }, 500);
+
+        // Route might already be active (deep-link refresh), so re-hydrate current view with fresh data.
+        refreshActiveViewAfterWorkspaceLoad();
 
         // Don't override initial view from URL - it's set in Monaco init callback
     } catch (e) {
@@ -1368,6 +1527,18 @@ async function deleteProject(key) {
 
                 // Clear editor if this was the selected project
                 if (currentProjectKey === key) {
+                    openTabs.forEach((tab) => {
+                        clearAutoSaveTimer(tab.fileId);
+                        const model = monacoModels.get(normalizeFileId(tab.fileId));
+                        if (model) model.dispose();
+                    });
+                    openTabs = [];
+                    monacoModels.clear();
+                    fileContents.clear();
+                    lastSavedContent.clear();
+                    activeFileId = null;
+                    renderTabs();
+
                     currentProjectKey = null;
                     editor.setValue('# Select a file to start editing');
                     document.getElementById('currentFileName').textContent = 'No file selected';
@@ -1770,28 +1941,53 @@ function openProjectAdvancedSettings() {
 }
 
 function selectFile(key) {
-    switchView('editor');
-    const script = projects.find(s => s.secret_key === key);
-    if (!script) return;
+    const runSelect = () => {
+        switchView('editor');
+        const script = projects.find((item) => item.secret_key === key);
+        if (!script) return;
 
-    currentProjectKey = key;
+        currentProjectKey = key;
 
-    // Clear old tabs and models when switching projects
-    openTabs.forEach(t => {
-        const m = monacoModels.get(t.fileId);
-        if (m) m.dispose();
-    });
-    openTabs = [];
-    monacoModels.clear();
-    fileContents.clear();
-    activeFileId = null;
+        // Clear old tabs and models when switching projects
+        openTabs.forEach((tab) => {
+            const fileId = normalizeFileId(tab.fileId);
+            clearAutoSaveTimer(fileId);
+            const model = monacoModels.get(fileId);
+            if (model) model.dispose();
+        });
+        openTabs = [];
+        monacoModels.clear();
+        fileContents.clear();
+        lastSavedContent.clear();
+        activeFileId = null;
 
-    // Load file tree for this project
-    loadFileTree(script.id);
+        // Load file tree for this project
+        loadFileTree(script.id, { autoOpen: true, preserveTabs: true });
 
-    renderFileList();
-    updateProjectInfoSidebar(script);
-    updateSettingsPanel(script);
+        renderFileList();
+        updateProjectInfoSidebar(script);
+        updateSettingsPanel(script);
+    };
+
+    if (currentProjectKey && currentProjectKey !== key && hasUnsavedTabs()) {
+        showConfirm(
+            'Unsaved Changes',
+            'Save all modified files before switching project? (Confirm = Save all, Cancel = switch without saving)',
+            async (confirmed) => {
+                if (confirmed) {
+                    const allSaved = await saveAllOpenTabs({ silent: true });
+                    if (!allSaved) {
+                        showToast('Error', 'Some files failed to save. Project was not switched.', 'error');
+                        return;
+                    }
+                }
+                runSelect();
+            }
+        );
+        return;
+    }
+
+    runSelect();
 }
 
 function updateProjectInfoSidebar(script) {
@@ -2663,7 +2859,7 @@ function renderFileTree(nodes, container, depth = 0) {
         div.setAttribute('tabindex', '-1');
 
         const isExpanded = expandedFolders.has(node.id);
-        const isActive = node.id === activeFileId;
+        const isActive = normalizeFileId(node.id) === normalizeFileId(activeFileId);
         const isSelected = selectedFileIds.has(node.id);
         const isEntryPoint = node.is_entry_point === 1;
 
@@ -2684,7 +2880,7 @@ function renderFileTree(nodes, container, depth = 0) {
             });
         } else {
             const { icon, color } = getFileIcon(node.name);
-            const isModified = openTabs.some(t => t.fileId === node.id && t.modified);
+            const isModified = openTabs.some((tab) => normalizeFileId(tab.fileId) === normalizeFileId(node.id) && tab.modified);
             div.innerHTML = `
                 <span class="w-3 flex-shrink-0"></span>
                 <i data-lucide="${icon}" class="w-3.5 h-3.5 ${color} flex-shrink-0"></i>
@@ -2790,7 +2986,7 @@ function renderFileTree(nodes, container, depth = 0) {
                 container.classList.remove('drag-over-root');
                 if (!e.target.closest('.file-tree-node') && draggedFileId) {
                     e.preventDefault();
-                    const file = projectFiles.find(f => f.id === draggedFileId);
+                    const file = findProjectFileById(draggedFileId);
                     if (file && file.parent_id !== null) {
                         await moveFileToFolder(draggedFileId, null);
                     }
@@ -2859,7 +3055,7 @@ function startInlineRename(div, node) {
         div.draggable = true;
         if (newName && newName !== node.name) {
             try {
-                const file = projectFiles.find(f => f.id === node.id);
+                const file = findProjectFileById(node.id);
                 if (!file) return;
                 const res = await fetch(`/api/projects/${file.project_id}/files/${node.id}/rename`, {
                     method: 'PUT',
@@ -2868,7 +3064,7 @@ function startInlineRename(div, node) {
                 });
                 const data = await res.json();
                 if (data.success) {
-                    const tab = openTabs.find(t => t.fileId === node.id);
+                    const tab = findOpenTab(node.id);
                     if (tab) {
                         tab.name = newName;
                         tab.language = detectLanguage(newName);
@@ -2955,8 +3151,80 @@ function filterFileTreeBySearch(query) {
     renderFileTree(tree);
 }
 
+function syncOpenTabsWithCurrentFiles() {
+    const previousActiveId = normalizeFileId(activeFileId);
+    const fileById = new Map(
+        projectFiles
+            .filter((item) => item.type === 'file')
+            .map((item) => [normalizeFileId(item.id), item])
+    );
+
+    // Remove cached data for files that no longer exist
+    for (const fileId of [...fileContents.keys()]) {
+        if (!fileById.has(normalizeFileId(fileId))) fileContents.delete(fileId);
+    }
+    for (const fileId of [...lastSavedContent.keys()]) {
+        if (!fileById.has(normalizeFileId(fileId))) lastSavedContent.delete(fileId);
+    }
+
+    openTabs = openTabs
+        .map((tab) => {
+            const fileId = normalizeFileId(tab.fileId);
+            const file = fileById.get(fileId);
+            if (!file) {
+                clearAutoSaveTimer(fileId);
+                const model = monacoModels.get(fileId);
+                if (model) {
+                    model.dispose();
+                    monacoModels.delete(fileId);
+                }
+                return null;
+            }
+
+            const nextName = file.name || tab.name;
+            const nextLanguage = detectLanguage(nextName);
+            if (tab.language !== nextLanguage) {
+                const model = monacoModels.get(fileId);
+                if (model && typeof monaco !== 'undefined') {
+                    try { monaco.editor.setModelLanguage(model, nextLanguage); } catch {}
+                }
+            }
+
+            return {
+                ...tab,
+                fileId,
+                name: nextName,
+                language: nextLanguage
+            };
+        })
+        .filter(Boolean);
+
+    const activeId = normalizeFileId(activeFileId);
+    if (activeFileId && !fileById.has(activeId)) {
+        activeFileId = openTabs.length ? openTabs[Math.max(0, openTabs.length - 1)].fileId : null;
+    }
+
+    renderTabs();
+    openTabs.forEach((tab) => updateTreeModifiedIndicator(tab.fileId, tab.modified));
+
+    if (normalizeFileId(activeFileId) !== previousActiveId) {
+        if (activeFileId) {
+            switchToTab(activeFileId);
+        } else if (editor) {
+            editor.setValue('// Select a file to start editing');
+            document.getElementById('currentFileName').textContent = 'No file selected';
+        }
+    }
+}
+
 // --- Load file tree for a project ---
-async function loadFileTree(projectId) {
+async function loadFileTree(projectId, options = {}) {
+    const settings = {
+        autoOpen: true,
+        preserveTabs: true,
+        ...options
+    };
+
     try {
         const res = await fetch(`/api/projects/${projectId}/files`, {
             headers: { 'Authorization': token }
@@ -2971,14 +3239,27 @@ async function loadFileTree(projectId) {
 
             renderFileTree();
 
-            // If there's an entry point, open it automatically
-            const entryPoint = projectFiles.find(f => f.is_entry_point === 1);
-            if (entryPoint) {
-                openFileInTab(entryPoint.id, entryPoint.name);
-            } else if (projectFiles.length > 0) {
-                // Open first file
-                const firstFile = projectFiles.find(f => f.type === 'file');
-                if (firstFile) openFileInTab(firstFile.id, firstFile.name);
+            if (settings.preserveTabs) {
+                syncOpenTabsWithCurrentFiles();
+            } else {
+                openTabs = [];
+                activeFileId = null;
+                renderTabs();
+            }
+
+            const shouldAutoOpen = settings.autoOpen && !activeFileId && openTabs.length === 0;
+            if (shouldAutoOpen) {
+                // If there's an entry point, open it automatically
+                const entryPoint = projectFiles.find((file) => Number(file.is_entry_point) === 1 && file.type === 'file');
+                if (entryPoint) {
+                    openFileInTab(entryPoint.id, entryPoint.name);
+                } else if (projectFiles.length > 0) {
+                    // Open first file
+                    const firstFile = projectFiles.find((file) => file.type === 'file');
+                    if (firstFile) openFileInTab(firstFile.id, firstFile.name);
+                }
+            } else if (activeFileId) {
+                revealFileInExplorer(activeFileId);
             }
         }
     } catch (e) {
@@ -2988,86 +3269,101 @@ async function loadFileTree(projectId) {
 
 // --- Open a file in a tab ---
 async function openFileInTab(fileId, fileName) {
+    const normalizedFileId = normalizeFileId(fileId);
+    if (!normalizedFileId) return;
+
     // Check if tab already open
-    const existingTab = openTabs.find(t => t.fileId === fileId);
+    const existingTab = findOpenTab(normalizedFileId);
     if (existingTab) {
-        switchToTab(fileId);
+        switchToTab(normalizedFileId);
         return;
     }
 
     // Fetch file content if not cached
-    if (!fileContents.has(fileId)) {
+    if (!fileContents.has(normalizedFileId)) {
         try {
-            const file = projectFiles.find(f => f.id === fileId);
+            const file = findProjectFileById(normalizedFileId);
             if (!file) return;
             const projectId = file.project_id;
-            const res = await fetch(`/api/projects/${projectId}/files/${fileId}/content`, {
+            const res = await fetch(`/api/projects/${projectId}/files/${normalizedFileId}/content`, {
                 headers: { 'Authorization': token }
             });
             const data = await res.json();
             if (data.success) {
-                fileContents.set(fileId, data.file?.content ?? data.content ?? '');
+                fileContents.set(normalizedFileId, data.file?.content ?? data.content ?? '');
             } else {
-                fileContents.set(fileId, '# Error loading file');
+                fileContents.set(normalizedFileId, '# Error loading file');
             }
         } catch (e) {
-            fileContents.set(fileId, '# Error loading file');
+            fileContents.set(normalizedFileId, '# Error loading file');
         }
     }
 
-    const language = detectLanguage(fileName);
-    openTabs.push({ fileId, name: fileName, language, modified: false });
+    const file = findProjectFileById(normalizedFileId);
+    const resolvedName = fileName || file?.name || 'untitled.txt';
+    const language = detectLanguage(resolvedName);
+    const initialContent = fileContents.get(normalizedFileId) || '';
+    if (!lastSavedContent.has(normalizedFileId)) {
+        lastSavedContent.set(normalizedFileId, initialContent);
+    }
+
+    openTabs.push({ fileId: normalizedFileId, name: resolvedName, language, modified: false });
     renderTabs();
-    switchToTab(fileId);
+    switchToTab(normalizedFileId);
 }
 
 // --- Switch active tab ---
 function switchToTab(fileId) {
-    activeFileId = fileId;
-    const content = fileContents.get(fileId) || '';
-    const tab = openTabs.find(t => t.fileId === fileId);
+    const normalizedFileId = normalizeFileId(fileId);
+    if (!normalizedFileId) return;
+
+    activeFileId = normalizedFileId;
+    const content = fileContents.get(normalizedFileId) || '';
+    const tab = findOpenTab(normalizedFileId);
     const language = tab?.language || 'plaintext';
 
     // Use Monaco multi-model
     if (typeof monaco !== 'undefined') {
-        let model = monacoModels.get(fileId);
+        let model = monacoModels.get(normalizedFileId);
         if (!model) {
-            const uri = monaco.Uri.parse(`file:///${fileId}/${tab?.name || 'file'}`);
+            const uri = monaco.Uri.parse(`file:///${normalizedFileId}/${encodeURIComponent(tab?.name || 'file')}`);
             model = monaco.editor.createModel(content, language, uri);
+            lastSavedContent.set(normalizedFileId, content);
             model.onDidChangeContent(() => {
-                const tab = openTabs.find(tb => tb.fileId === fileId);
-                if (tab && !tab.modified) {
-                    tab.modified = true;
-                    renderTabs();
-                    // Update modified indicator in file tree
-                    const treeNode = document.querySelector(`.file-tree-node[data-file-id="${fileId}"]`);
-                    if (treeNode && !treeNode.querySelector('.tree-modified-dot')) {
-                        const dot = document.createElement('span');
-                        dot.className = 'tree-modified-dot';
-                        const nameSpan = treeNode.querySelector('.file-node-name');
-                        if (nameSpan) nameSpan.after(dot);
-                    }
+                const currentTab = findOpenTab(normalizedFileId);
+                if (!currentTab) return;
+                const currentValue = model.getValue();
+                const savedValue = lastSavedContent.get(normalizedFileId) ?? '';
+                const isModified = currentValue !== savedValue;
+                setTabModifiedState(normalizedFileId, isModified);
+                if (isModified) {
+                    scheduleAutoSave(normalizedFileId);
+                } else {
+                    clearAutoSaveTimer(normalizedFileId);
                 }
             });
-            monacoModels.set(fileId, model);
+            monacoModels.set(normalizedFileId, model);
         }
         editor.setModel(model);
     } else {
         editor.setValue(content);
     }
 
-    const file = projectFiles.find(f => f.id === fileId);
+    const file = findProjectFileById(normalizedFileId);
     document.getElementById('currentFileName').textContent = file?.name || tab?.name || 'No file';
 
     renderTabs();
     // Highlight active in file tree and reveal in explorer
-    revealFileInExplorer(fileId);
+    revealFileInExplorer(normalizedFileId);
 }
 
 // --- Reveal a file in the explorer (expand parents, highlight, scroll into view) ---
 function revealFileInExplorer(fileId) {
+    const normalizedFileId = normalizeFileId(fileId);
+    if (!normalizedFileId) return;
+
     // Expand all parent folders
-    const file = projectFiles.find(f => f.id === fileId);
+    const file = findProjectFileById(normalizedFileId);
     if (file) {
         let parentId = file.parent_id;
         let needsRerender = false;
@@ -3076,19 +3372,19 @@ function revealFileInExplorer(fileId) {
                 expandedFolders.add(parentId);
                 needsRerender = true;
             }
-            const parent = projectFiles.find(f => f.id === parentId);
+            const parent = findProjectFileById(parentId);
             parentId = parent?.parent_id || null;
         }
         if (needsRerender) renderFileTree();
     }
 
     // Highlight active node
-    document.querySelectorAll('.file-tree-node').forEach(el => {
-        el.classList.toggle('active', el.getAttribute('data-file-id') == fileId);
+    document.querySelectorAll('.file-tree-node[data-file-id]').forEach((el) => {
+        el.classList.toggle('active', normalizeFileId(el.getAttribute('data-file-id')) === normalizedFileId);
     });
 
     // Scroll into view
-    const activeNode = document.querySelector(`.file-tree-node[data-file-id="${fileId}"]`);
+    const activeNode = document.querySelector(`.file-tree-node[data-file-id="${normalizedFileId}"]`);
     if (activeNode) {
         const container = document.getElementById('file-tree-container');
         if (container) {
@@ -3103,41 +3399,175 @@ function revealFileInExplorer(fileId) {
 
 // --- Close a tab ---
 function closeTab(fileId, force = false) {
-    const tab = openTabs.find(t => t.fileId === fileId);
+    const normalizedFileId = normalizeFileId(fileId);
+    const tab = findOpenTab(normalizedFileId);
     if (!tab) return;
 
     if (tab.modified && !force) {
         showConfirm('Unsaved Changes', `Save changes to ${tab.name}?`, async (confirmed) => {
             if (confirmed) {
-                await saveFileById(fileId);
+                const saved = await saveFileById(normalizedFileId);
+                if (!saved) return;
             }
-            doCloseTab(fileId);
+            doCloseTab(normalizedFileId, { trackHistory: true });
         });
         return;
     }
-    doCloseTab(fileId);
+    doCloseTab(normalizedFileId, { trackHistory: true });
 }
 
-function doCloseTab(fileId) {
-    openTabs = openTabs.filter(t => t.fileId !== fileId);
+function doCloseTab(fileId, options = {}) {
+    const settings = {
+        trackHistory: false,
+        ...options
+    };
+    const normalizedFileId = normalizeFileId(fileId);
+    const closeIndex = openTabs.findIndex((tab) => normalizeFileId(tab.fileId) === normalizedFileId);
+    if (closeIndex === -1) return;
+
+    const closingTab = openTabs[closeIndex];
+    if (settings.trackHistory) {
+        rememberClosedTab(closingTab);
+    }
+
+    openTabs = openTabs.filter((tab) => normalizeFileId(tab.fileId) !== normalizedFileId);
+
+    clearAutoSaveTimer(normalizedFileId);
+    autoSaveInFlight.delete(normalizedFileId);
+
     // Clean up model
-    const model = monacoModels.get(fileId);
+    const model = monacoModels.get(normalizedFileId);
     if (model) {
         model.dispose();
-        monacoModels.delete(fileId);
+        monacoModels.delete(normalizedFileId);
     }
-    fileContents.delete(fileId);
 
-    if (activeFileId === fileId) {
+    if (normalizeFileId(activeFileId) === normalizedFileId) {
         if (openTabs.length > 0) {
-            switchToTab(openTabs[openTabs.length - 1].fileId);
+            const nextIndex = Math.min(closeIndex, openTabs.length - 1);
+            switchToTab(openTabs[nextIndex].fileId);
         } else {
             activeFileId = null;
             if (editor) editor.setValue('// Select a file to start editing');
             document.getElementById('currentFileName').textContent = 'No file selected';
+            renderTabs();
         }
+        return;
     }
     renderTabs();
+}
+
+function moveTab(sourceFileId, targetFileId) {
+    const sourceId = normalizeFileId(sourceFileId);
+    const targetId = normalizeFileId(targetFileId);
+    if (!sourceId || !targetId || sourceId === targetId) return;
+
+    const sourceIndex = openTabs.findIndex((tab) => normalizeFileId(tab.fileId) === sourceId);
+    const targetIndex = openTabs.findIndex((tab) => normalizeFileId(tab.fileId) === targetId);
+    if (sourceIndex === -1 || targetIndex === -1) return;
+
+    const [moved] = openTabs.splice(sourceIndex, 1);
+    openTabs.splice(targetIndex, 0, moved);
+    renderTabs();
+}
+
+function closeMultipleTabs(fileIds) {
+    const targetIds = new Set(fileIds.map((id) => normalizeFileId(id)).filter(Boolean));
+    const targets = openTabs.filter((tab) => targetIds.has(normalizeFileId(tab.fileId)));
+    if (!targets.length) return;
+
+    const closeNow = () => {
+        const closingOrder = [...targets];
+        for (const tab of closingOrder) {
+            doCloseTab(tab.fileId, { trackHistory: true });
+        }
+    };
+
+    if (targets.some((tab) => tab.modified)) {
+        showConfirm(
+            'Unsaved Changes',
+            'Save all modified files before closing tabs? (Confirm = Save all, Cancel = close without saving)',
+            async (confirmed) => {
+                if (confirmed) {
+                    const allSaved = await saveAllOpenTabs({ silent: true });
+                    if (!allSaved) {
+                        showToast('Error', 'Some files failed to save. Tabs were not closed.', 'error');
+                        return;
+                    }
+                }
+                closeNow();
+            }
+        );
+        return;
+    }
+
+    closeNow();
+}
+
+function closeAllTabs() {
+    closeMultipleTabs(openTabs.map((tab) => tab.fileId));
+}
+
+function closeOtherTabs(fileId) {
+    const normalized = normalizeFileId(fileId);
+    closeMultipleTabs(
+        openTabs
+            .map((tab) => tab.fileId)
+            .filter((id) => normalizeFileId(id) !== normalized)
+    );
+    if (findOpenTab(normalized)) switchToTab(normalized);
+}
+
+function showTabContextMenu(x, y, fileId) {
+    const normalized = normalizeFileId(fileId);
+    const tab = findOpenTab(normalized);
+    if (!tab) return;
+
+    hideContextMenu();
+    contextMenuEl = document.createElement('div');
+    contextMenuEl.className = 'context-menu';
+    contextMenuEl.style.left = `${x}px`;
+    contextMenuEl.style.top = `${y}px`;
+
+    const items = [
+        { label: 'Save', icon: 'save', action: () => saveFileById(normalized) },
+        { label: 'Save All', icon: 'files', action: () => saveAllOpenTabs() },
+        null,
+        { label: 'Close', icon: 'x', action: () => closeTab(normalized) },
+        { label: 'Close Others', icon: 'x', action: () => closeOtherTabs(normalized) },
+        { label: 'Close All', icon: 'x-circle', action: () => closeAllTabs() },
+        null,
+        { label: 'Reopen Closed Tab', icon: 'history', action: () => reopenLastClosedTab() }
+    ];
+
+    contextMenuEl.innerHTML = items.map((item) => {
+        if (!item) return '<div class="context-menu-separator"></div>';
+        return `
+            <div class="context-menu-item" data-action="${item.label}">
+                <i data-lucide="${item.icon}" class="w-3.5 h-3.5"></i>
+                <span>${item.label}</span>
+            </div>
+        `;
+    }).join('');
+
+    document.body.appendChild(contextMenuEl);
+    try { lucide.createIcons(); } catch {}
+
+    const actionItems = items.filter(Boolean);
+    contextMenuEl.querySelectorAll('.context-menu-item').forEach((el, index) => {
+        el.addEventListener('click', () => {
+            actionItems[index]?.action();
+            hideContextMenu();
+        });
+    });
+
+    const rect = contextMenuEl.getBoundingClientRect();
+    if (rect.right > window.innerWidth) contextMenuEl.style.left = `${x - rect.width}px`;
+    if (rect.bottom > window.innerHeight) contextMenuEl.style.top = `${y - rect.height}px`;
+
+    setTimeout(() => {
+        document.addEventListener('click', hideContextMenu, { once: true });
+    }, 0);
 }
 
 // --- Render tabs UI ---
@@ -3145,15 +3575,16 @@ function renderTabs() {
     const tabBar = document.getElementById('editor-tab-bar');
     if (!tabBar) return;
 
-    tabBar.innerHTML = openTabs.map(t => {
-        const isActive = t.fileId === activeFileId;
-        const { icon, color } = getFileIcon(t.name);
+    tabBar.innerHTML = openTabs.map((tab) => {
+        const fileId = normalizeFileId(tab.fileId);
+        const isActive = normalizeFileId(activeFileId) === fileId;
+        const { icon, color } = getFileIcon(tab.name);
         return `
-            <div class="editor-tab ${isActive ? 'active' : ''} ${t.modified ? 'modified' : ''}" data-file-id="${t.fileId}">
+            <div class="editor-tab ${isActive ? 'active' : ''} ${tab.modified ? 'modified' : ''}" data-file-id="${fileId}" draggable="true">
                 <i data-lucide="${icon}" class="w-3.5 h-3.5 ${color}"></i>
-                <span class="tab-name">${escapeHtml(t.name)}</span>
-                ${t.modified ? '<span class="modified-dot"></span>' : ''}
-                <button class="tab-close" data-close-id="${t.fileId}" title="Close">
+                <span class="tab-name">${escapeHtml(tab.name)}</span>
+                ${tab.modified ? '<span class="modified-dot"></span>' : ''}
+                <button class="tab-close" data-close-id="${fileId}" title="Close">
                     <i data-lucide="x" class="w-3 h-3"></i>
                 </button>
             </div>
@@ -3161,14 +3592,41 @@ function renderTabs() {
     }).join('');
 
     // Bind events via delegation
-    tabBar.querySelectorAll('.editor-tab').forEach(el => {
-        const fid = Number(el.getAttribute('data-file-id'));
+    tabBar.querySelectorAll('.editor-tab').forEach((el) => {
+        const fid = normalizeFileId(el.getAttribute('data-file-id'));
         el.addEventListener('click', (e) => {
             if (e.target.closest('.tab-close')) return;
             switchToTab(fid);
         });
         el.addEventListener('mousedown', (e) => {
             if (e.button === 1) { e.preventDefault(); closeTab(fid); }
+        });
+        el.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            switchToTab(fid);
+            showTabContextMenu(e.clientX, e.clientY, fid);
+        });
+        el.addEventListener('dragstart', (e) => {
+            e.dataTransfer?.setData('text/plain', fid);
+            e.dataTransfer.effectAllowed = 'move';
+            el.classList.add('dragging');
+        });
+        el.addEventListener('dragend', () => {
+            el.classList.remove('dragging');
+            tabBar.querySelectorAll('.editor-tab.drag-over').forEach((node) => node.classList.remove('drag-over'));
+        });
+        el.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            el.classList.add('drag-over');
+        });
+        el.addEventListener('dragleave', () => {
+            el.classList.remove('drag-over');
+        });
+        el.addEventListener('drop', (e) => {
+            e.preventDefault();
+            el.classList.remove('drag-over');
+            const sourceId = normalizeFileId(e.dataTransfer?.getData('text/plain'));
+            moveTab(sourceId, fid);
         });
         const closeBtn = el.querySelector('.tab-close');
         if (closeBtn) {
@@ -3182,38 +3640,40 @@ function renderTabs() {
 }
 
 // --- Save file by ID ---
-async function saveFileById(fileId) {
-    const model = monacoModels.get(fileId);
-    if (!model) return;
+async function saveFileById(fileId, options = {}) {
+    const settings = {
+        silent: false,
+        ...options
+    };
+    const normalizedFileId = normalizeFileId(fileId);
+    if (!normalizedFileId) return false;
 
-    const content = model.getValue();
-    const file = projectFiles.find(f => f.id === fileId);
-    if (!file) return;
+    const model = monacoModels.get(normalizedFileId);
+    const content = model ? model.getValue() : (fileContents.get(normalizedFileId) ?? null);
+    if (content === null) return false;
+
+    const file = findProjectFileById(normalizedFileId);
+    if (!file) return false;
 
     try {
-        const res = await fetch(`/api/projects/${file.project_id}/files/${fileId}`, {
+        const res = await fetch(`/api/projects/${file.project_id}/files/${normalizedFileId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', 'Authorization': token },
             body: JSON.stringify({ content })
         });
         const data = await res.json();
         if (data.success) {
-            fileContents.set(fileId, content);
-            const tab = openTabs.find(t => t.fileId === fileId);
-            if (tab) {
-                tab.modified = false;
-                renderTabs();
-                // Remove modified indicator from file tree
-                const treeDot = document.querySelector(`.file-tree-node[data-file-id="${fileId}"] .tree-modified-dot`);
-                if (treeDot) treeDot.remove();
-            }
+            fileContents.set(normalizedFileId, content);
+            lastSavedContent.set(normalizedFileId, content);
+            clearAutoSaveTimer(normalizedFileId);
+            setTabModifiedState(normalizedFileId, false);
             return true;
         } else {
-            showToast('Error', data.error || 'Failed to save', 'error');
+            if (!settings.silent) showToast('Error', data.error || 'Failed to save', 'error');
             return false;
         }
     } catch (e) {
-        showToast('Error', 'Failed to save file', 'error');
+        if (!settings.silent) showToast('Error', 'Failed to save file', 'error');
         return false;
     }
 }
@@ -3280,7 +3740,7 @@ async function createNewFolder(parentId = null) {
 }
 
 async function deleteFileItem(fileId) {
-    const file = projectFiles.find(f => f.id === fileId);
+    const file = findProjectFileById(fileId);
     if (!file) return;
 
     // Collect all child file IDs for a folder (recursive)
@@ -3309,10 +3769,10 @@ async function deleteFileItem(fileId) {
                 if (file.type === 'folder') {
                     const childIds = collectChildFileIds(fileId);
                     childIds.forEach(cid => {
-                        if (openTabs.find(t => t.fileId === cid)) doCloseTab(cid);
+                        if (findOpenTab(cid)) doCloseTab(cid);
                     });
                 }
-                if (openTabs.find(t => t.fileId === fileId)) {
+                if (findOpenTab(fileId)) {
                     doCloseTab(fileId);
                 }
                 await loadFileTree(file.project_id);
@@ -3327,7 +3787,7 @@ async function deleteFileItem(fileId) {
 }
 
 async function renameFileItem(fileId) {
-    const file = projectFiles.find(f => f.id === fileId);
+    const file = findProjectFileById(fileId);
     if (!file) return;
 
     showPrompt('Rename', `New name for "${file.name}":`, async (newName) => {
@@ -3341,7 +3801,7 @@ async function renameFileItem(fileId) {
             const data = await res.json();
             if (data.success) {
                 // Update tab name if open
-                const tab = openTabs.find(t => t.fileId === fileId);
+                const tab = findOpenTab(fileId);
                 if (tab) {
                     tab.name = newName;
                     tab.language = detectLanguage(newName);
@@ -3359,7 +3819,7 @@ async function renameFileItem(fileId) {
 }
 
 async function moveFileToFolder(fileId, targetFolderId) {
-    const file = projectFiles.find(f => f.id === fileId);
+    const file = findProjectFileById(fileId);
     if (!file) return;
 
     try {
@@ -3372,7 +3832,7 @@ async function moveFileToFolder(fileId, targetFolderId) {
         if (data.success) {
             if (targetFolderId) expandedFolders.add(targetFolderId);
             await loadFileTree(file.project_id);
-            const dest = targetFolderId ? projectFiles.find(f => f.id === targetFolderId)?.name || 'folder' : 'root';
+            const dest = targetFolderId ? findProjectFileById(targetFolderId)?.name || 'folder' : 'root';
             showToast('Moved', `Moved "${file.name}" to ${dest}`, 'success');
         } else {
             showToast('Error', data.error, 'error');
@@ -3383,7 +3843,7 @@ async function moveFileToFolder(fileId, targetFolderId) {
 }
 
 async function setEntryPoint(fileId) {
-    const file = projectFiles.find(f => f.id === fileId);
+    const file = findProjectFileById(fileId);
     if (!file || file.type !== 'file') return;
 
     try {
@@ -3468,7 +3928,7 @@ function showContextMenu(x, y, node) {
     if (node.type === 'file') {
         items.push({ label: 'Set as Entry Point', icon: 'star', action: () => setEntryPoint(node.id) });
         items.push({ label: 'Duplicate', icon: 'copy', action: () => {
-            const file = projectFiles.find(f => f.id === node.id);
+            const file = findProjectFileById(node.id);
             if (!file) return;
             fetch(`/api/projects/${file.project_id}/files/${node.id}/copy`, {
                 method: 'POST',
@@ -3484,7 +3944,7 @@ function showContextMenu(x, y, node) {
             }).catch(() => showToast('Error', 'Failed to duplicate', 'error'));
         }});
         items.push({ label: 'Download', icon: 'download', action: () => {
-            const file = projectFiles.find(f => f.id === node.id);
+            const file = findProjectFileById(node.id);
             if (!file) return;
             downloadWithAuth(
                 `/api/projects/${file.project_id}/files/${node.id}/content?download=true`,
@@ -3500,7 +3960,7 @@ function showContextMenu(x, y, node) {
         let path = node.name;
         let parentId = node.parent_id;
         while (parentId) {
-            const parent = projectFiles.find(f => f.id === parentId);
+            const parent = findProjectFileById(parentId);
             if (parent) { path = parent.name + '/' + path; parentId = parent.parent_id; }
             else break;
         }
@@ -3791,13 +4251,22 @@ async function searchAcrossFiles() {
                     <div class="search-result-file text-xs text-gray-400 px-2 py-1 font-medium">${escapeHtml(r.name)}</div>
                     ${(r.matches || []).map(m => `
                         <div class="search-result-item px-3 py-1 text-xs cursor-pointer hover:bg-[#27272a] rounded"
-                             onclick="openFileInTab(${r.fileId}, '${escapeHtml(r.name)}')">
+                             data-file-id="${escapeHtml(r.fileId)}"
+                             data-file-name="${escapeHtml(r.name)}">
                             <span class="text-gray-500 mr-2">${m.line || ''}</span>
                             <span class="text-gray-300">${escapeHtml(m.content || '')}</span>
                         </div>
                     `).join('')}
                 </div>
             `).join('');
+
+            resultsContainer.querySelectorAll('.search-result-item[data-file-id]').forEach((item) => {
+                item.addEventListener('click', () => {
+                    const fileId = item.getAttribute('data-file-id') || '';
+                    const name = item.getAttribute('data-file-name') || 'untitled.txt';
+                    openFileInTab(fileId, name);
+                });
+            });
         } else {
             resultsContainer.innerHTML = '<div class="text-center text-gray-500 text-xs py-4">No results found</div>';
         }
@@ -3847,7 +4316,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const targetId = activeFileId || (selectedFileIds.size === 1 ? [...selectedFileIds][0] : null);
             if (targetId) {
                 const targetNode = document.querySelector(`.file-tree-node[data-file-id="${targetId}"]`);
-                const file = projectFiles.find(f => f.id === targetId);
+                const file = findProjectFileById(targetId);
                 if (targetNode && file) startInlineRename(targetNode, file);
             }
         }
@@ -3994,7 +4463,11 @@ document.addEventListener('keydown', (e) => {
     // Ctrl/Cmd + S: Save
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        if (currentProjectKey) saveCurrentFile();
+        if (e.shiftKey) {
+            if (currentProjectKey) saveAllOpenTabs();
+        } else {
+            if (currentProjectKey) saveCurrentFile();
+        }
     }
 
     // Ctrl/Cmd + N: New File (in editor view)
@@ -4010,7 +4483,8 @@ document.addEventListener('keydown', (e) => {
     // Ctrl/Cmd + W: Close current tab
     if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
         e.preventDefault();
-        if (activeFileId) closeTab(activeFileId);
+        if (e.shiftKey) closeAllTabs();
+        else if (activeFileId) closeTab(activeFileId);
     }
 
     // Ctrl/Cmd + Shift + F: Search across files
@@ -4025,10 +4499,17 @@ document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Tab') {
         e.preventDefault();
         if (openTabs.length > 1) {
-            const idx = openTabs.findIndex(t => t.fileId === activeFileId);
-            const next = (idx + 1) % openTabs.length;
+            const idx = openTabs.findIndex((tab) => normalizeFileId(tab.fileId) === normalizeFileId(activeFileId));
+            if (idx === -1) return;
+            const next = e.shiftKey ? (idx - 1 + openTabs.length) % openTabs.length : (idx + 1) % openTabs.length;
             switchToTab(openTabs[next].fileId);
         }
+    }
+
+    // Ctrl/Cmd + Shift + T: Reopen recently closed tab
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'T' || e.key === 't')) {
+        e.preventDefault();
+        reopenLastClosedTab();
     }
 
     // F2: Rename active file
@@ -5547,6 +6028,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', (event) => {
+    if (hasUnsavedTabs()) {
+        event.preventDefault();
+        event.returnValue = '';
+    }
+
+    openTabs.forEach((tab) => clearAutoSaveTimer(tab.fileId));
     disconnectWorkspaceWebSocket({ allowReconnect: false });
 });
