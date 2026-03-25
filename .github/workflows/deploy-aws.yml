@@ -115,6 +115,8 @@ jobs:
           echo "lambda_key=${LAMBDA_KEY}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy CloudFormation Stack
+        id: deploy_stack
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -143,7 +145,70 @@ jobs:
             --no-fail-on-empty-changeset \
             --region "${AWS_REGION}"
 
+      - name: Debug CloudFormation Failure
+        if: steps.deploy_stack.outcome == 'failure'
+        shell: bash
+        run: |
+          set +e
+          echo "CloudFormation deploy failed; collecting diagnostics..."
+
+          echo ""
+          echo "== Stack Summary =="
+          aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].[StackName,StackStatus,StackStatusReason,LastUpdatedTime]" \
+            --output table || true
+
+          echo ""
+          echo "== Recent Stack Events =="
+          aws cloudformation describe-stack-events \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "StackEvents[0:30].[Timestamp,LogicalResourceId,ResourceType,ResourceStatus,ResourceStatusReason]" \
+            --output table || true
+
+          echo ""
+          echo "== Stack Resources =="
+          aws cloudformation list-stack-resources \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "StackResourceSummaries[].[LogicalResourceId,ResourceType,ResourceStatus,PhysicalResourceId]" \
+            --output table || true
+
+          echo ""
+          echo "== Recent Change Sets =="
+          aws cloudformation list-change-sets \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Summaries[0:10].[ChangeSetName,Status,ExecutionStatus,CreationTime,StatusReason]" \
+            --output table || true
+
+          CHANGE_SET_NAME="$(aws cloudformation list-change-sets \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Summaries[0].ChangeSetName" \
+            --output text 2>/dev/null)"
+
+          if [ -n "${CHANGE_SET_NAME}" ] && [ "${CHANGE_SET_NAME}" != "None" ]; then
+            echo ""
+            echo "== Latest Change Set Detail (${CHANGE_SET_NAME}) =="
+            aws cloudformation describe-change-set \
+              --stack-name "${STACK_NAME}" \
+              --change-set-name "${CHANGE_SET_NAME}" \
+              --region "${AWS_REGION}" \
+              --output json || true
+          fi
+
+      - name: Fail When Deploy Failed
+        if: steps.deploy_stack.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Deploy failed. See diagnostics above."
+          exit 1
+
       - name: Resolve Stack Outputs
+        if: steps.deploy_stack.outcome == 'success'
         id: stack_outputs
         shell: bash
         run: |
