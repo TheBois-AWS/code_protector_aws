@@ -12,6 +12,9 @@ Parameters:
   FrontendBucketName:
     Type: String
     Default: ''
+  ContentBucketName:
+    Type: String
+    Default: ''
   AllowedOrigins:
     Type: CommaDelimitedList
     Default: '*'
@@ -66,6 +69,7 @@ Parameters:
 
 Conditions:
   HasFrontendBucketName: !Not [!Equals [!Ref FrontendBucketName, '']]
+  HasContentBucketName: !Not [!Equals [!Ref ContentBucketName, '']]
   CreateApiFunctionLogGroup: !Equals [!Ref ManageApiLogGroup, 'true']
   HasCloudWatchAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
 
@@ -79,6 +83,27 @@ Resources:
         - HasFrontendBucketName
         - !Ref FrontendBucketName
         - !Sub '${ProjectName}-${Stage}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  ContentBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !If
+        - HasContentBucketName
+        - !Ref ContentBucketName
+        - !Sub '${ProjectName}-${Stage}-content-${AWS::AccountId}'
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
@@ -178,9 +203,14 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetObject
+                Resource:
+                  - !Sub '${ContentBucket.Arn}/*'
+                  - !Sub '${FrontendBucket.Arn}/*'
+              - Effect: Allow
+                Action:
                   - s3:PutObject
                   - s3:DeleteObject
-                Resource: !Sub '${FrontendBucket.Arn}/*'
+                Resource: !Sub '${ContentBucket.Arn}/*'
 
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -198,7 +228,8 @@ Resources:
         Variables:
           APP_NAME: code_protector_aws
           ALLOWED_ORIGINS: !Join [',', !Ref AllowedOrigins]
-          CONTENT_BUCKET: !Ref FrontendBucket
+          CONTENT_BUCKET: !Ref ContentBucket
+          APP_ASSETS_BUCKET: !Ref FrontendBucket
           DDB_TABLE_USERS: !Ref UsersTable
           DDB_TABLE_WORKSPACES: !Ref WorkspacesTable
           DDB_TABLE_WORKSPACE_MEMBERS: !Ref WorkspaceMembersTable
@@ -948,6 +979,8 @@ Resources:
 Outputs:
   FrontendBucketName:
     Value: !Ref FrontendBucket
+  ContentBucketName:
+    Value: !Ref ContentBucket
   CloudFrontDistributionId:
     Value: !Ref Distribution
   CloudFrontDomainName:

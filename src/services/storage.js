@@ -8,22 +8,34 @@ async function streamToString(stream) {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
+async function getFromBucket(bucket, key) {
+  if (!bucket) return null;
+  try {
+    const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const text = await streamToString(response.Body);
+    return {
+      body: Buffer.from(text, 'utf-8'),
+      size: Number(response.ContentLength || Buffer.byteLength(text, 'utf-8')),
+      async text() {
+        return text;
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
 export const storage = {
   async get(key) {
-    if (!config.s3Bucket) return null;
-    try {
-      const response = await s3.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key }));
-      const text = await streamToString(response.Body);
-      return {
-        body: Buffer.from(text, 'utf-8'),
-        size: Number(response.ContentLength || Buffer.byteLength(text, 'utf-8')),
-        async text() {
-          return text;
-        }
-      };
-    } catch {
-      return null;
+    const primary = await getFromBucket(config.s3Bucket, key);
+    if (primary) return primary;
+
+    // Fallback for legacy objects that were previously stored in the frontend bucket.
+    if (config.assetsBucket && config.assetsBucket !== config.s3Bucket) {
+      return await getFromBucket(config.assetsBucket, key);
     }
+
+    return null;
   },
   async put(key, value, contentType = 'text/plain; charset=utf-8') {
     if (!config.s3Bucket) throw new Error('APP_S3_BUCKET is not configured');

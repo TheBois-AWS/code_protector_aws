@@ -43,6 +43,7 @@ jobs:
       PROJECT_NAME: ${{ vars.PROJECT_NAME || 'code-protector-aws' }}
       ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS || '*' }}
       FRONTEND_BUCKET_NAME: ${{ vars.FRONTEND_BUCKET_NAME || '' }}
+      CONTENT_BUCKET_NAME: ${{ vars.CONTENT_BUCKET_NAME || '' }}
       LAMBDA_ARTIFACT_BUCKET: ${{ vars.LAMBDA_ARTIFACT_BUCKET || '' }}
       LAMBDA_MEMORY_SIZE: ${{ vars.LAMBDA_MEMORY_SIZE || '1024' }}
       LAMBDA_TIMEOUT: ${{ vars.LAMBDA_TIMEOUT || '30' }}
@@ -136,6 +137,9 @@ jobs:
           if [ -n "${FRONTEND_BUCKET_NAME}" ]; then
             PARAMS+=("FrontendBucketName=${FRONTEND_BUCKET_NAME}")
           fi
+          if [ -n "${CONTENT_BUCKET_NAME}" ]; then
+            PARAMS+=("ContentBucketName=${CONTENT_BUCKET_NAME}")
+          fi
 
           aws cloudformation deploy \
             --template-file infra/template.yaml \
@@ -218,6 +222,11 @@ jobs:
             --region "${AWS_REGION}" \
             --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue | [0]" \
             --output text)"
+          CONTENT_BUCKET="$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ContentBucketName'].OutputValue | [0]" \
+            --output text)"
           DIST_ID="$(aws cloudformation describe-stacks \
             --stack-name "${STACK_NAME}" \
             --region "${AWS_REGION}" \
@@ -240,6 +249,7 @@ jobs:
           fi
 
           echo "frontend_bucket=${FRONTEND_BUCKET}" >> "$GITHUB_OUTPUT"
+          echo "content_bucket=${CONTENT_BUCKET}" >> "$GITHUB_OUTPUT"
           echo "distribution_id=${DIST_ID}" >> "$GITHUB_OUTPUT"
           echo "domain=${DOMAIN}" >> "$GITHUB_OUTPUT"
           echo "api_url=${API_URL}" >> "$GITHUB_OUTPUT"
@@ -248,7 +258,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Keep non-frontend objects in the same bucket (project/file content is stored here).
+          # Keep --delete disabled to avoid wiping fallback legacy objects from previous layouts.
           aws s3 sync frontend/ "s3://${{ steps.stack_outputs.outputs.frontend_bucket }}" --region "${AWS_REGION}"
 
       - name: Invalidate CloudFront Cache
@@ -267,6 +277,8 @@ jobs:
             echo "- Stack: \`${STACK_NAME}\`"
             echo "- Region: \`${AWS_REGION}\`"
             echo "- Frontend: https://${{ steps.stack_outputs.outputs.domain }}"
+            echo "- Frontend bucket: \`${{ steps.stack_outputs.outputs.frontend_bucket }}\`"
+            echo "- Content bucket: \`${{ steps.stack_outputs.outputs.content_bucket }}\`"
             echo "- API URL: ${{ steps.stack_outputs.outputs.api_url }}"
             echo "- Lambda artifact: s3://${LAMBDA_ARTIFACT_BUCKET}/${{ steps.lambda_artifact.outputs.lambda_key }}"
           } >> "$GITHUB_STEP_SUMMARY"
