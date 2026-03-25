@@ -4,6 +4,7 @@ import { usersRepo, workspaceInvitationsRepo, workspaceMembersRepo } from '../se
 import { nowIso, randomId } from '../utils/common.js';
 import { ROLE_HIERARCHY, getWorkspaceAccess, hasPermission, listWorkspaceInvitations, listWorkspaceMembers, resolveWorkspace } from '../utils/workspace.js';
 import { logAction } from './workspaceController.js';
+import { broadcastWorkspaceEvent } from '../utils/realtime.js';
 
 export async function listTeamMembers(request, workspaceIdentifier) {
   const userId = await getUserIdFromRequest(request);
@@ -69,6 +70,7 @@ export async function inviteTeamMember(request, workspaceIdentifier) {
       created_at: nowIso()
     });
     await logAction(workspace.id, 'TEAM_MEMBER_ADDED', `Added ${email} as ${role}`, request);
+    await broadcastWorkspaceEvent(workspace.id, 'TEAM_UPDATE', { action: 'member_added', user_id: String(existingUser.id), role });
     return jsonResponse(200, { success: true, message: 'Member added successfully', added: true });
   }
 
@@ -88,6 +90,7 @@ export async function inviteTeamMember(request, workspaceIdentifier) {
     created_at: nowIso()
   });
   await logAction(workspace.id, 'TEAM_INVITE_SENT', `Invited ${email} as ${role}`, request);
+  await broadcastWorkspaceEvent(workspace.id, 'TEAM_UPDATE', { action: 'invite_sent', email, role, token });
 
   const host = request.headers.host || request.headers.Host || '';
   const protocol = (request.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
@@ -116,6 +119,7 @@ export async function updateTeamMember(request, workspaceIdentifier, memberId) {
 
   await workspaceMembersRepo.update(String(member.id), { role });
   await logAction(workspace.id, 'TEAM_ROLE_UPDATED', `Changed member ${member.id} role to ${role}`, request);
+  await broadcastWorkspaceEvent(workspace.id, 'TEAM_UPDATE', { action: 'role_updated', member_id: String(member.id), role });
   return jsonResponse(200, { success: true });
 }
 
@@ -132,12 +136,14 @@ export async function removeTeamMember(request, workspaceIdentifier, memberId) {
   if (String(member.user_id) === String(userId)) {
     await workspaceMembersRepo.delete(String(member.id));
     await logAction(workspace.id, 'TEAM_MEMBER_LEFT', `User ${userId} left workspace`, request);
+    await broadcastWorkspaceEvent(workspace.id, 'TEAM_UPDATE', { action: 'member_left', user_id: String(userId) });
     return jsonResponse(200, { success: true, left: true });
   }
   if (!hasPermission(access.role, 'manage_team')) return jsonResponse(403, { success: false, error: 'Permission denied' });
   if (access.role !== 'owner' && ROLE_HIERARCHY[member.role] >= ROLE_HIERARCHY[access.role]) return jsonResponse(403, { success: false, error: 'Cannot remove this member' });
   await workspaceMembersRepo.delete(String(member.id));
   await logAction(workspace.id, 'TEAM_MEMBER_REMOVED', `Removed member ${member.id}`, request);
+  await broadcastWorkspaceEvent(workspace.id, 'TEAM_UPDATE', { action: 'member_removed', member_id: String(member.id), user_id: String(member.user_id) });
   return jsonResponse(200, { success: true });
 }
 
@@ -151,6 +157,7 @@ export async function cancelInvitation(request, workspaceIdentifier, inviteId) {
   const invitation = await workspaceInvitationsRepo.getById(String(inviteId));
   if (!invitation || String(invitation.workspace_id) !== String(workspace.id)) return jsonResponse(404, { success: false, error: 'Invitation not found' });
   await workspaceInvitationsRepo.delete(String(invitation.id));
+  await broadcastWorkspaceEvent(workspace.id, 'TEAM_UPDATE', { action: 'invite_cancelled', invite_id: String(invitation.id) });
   return jsonResponse(200, { success: true });
 }
 
@@ -203,6 +210,7 @@ export async function acceptInvitation(request, token) {
 
   const workspace = await resolveWorkspace(String(invitation.workspace_id));
   await logAction(invitation.workspace_id, 'TEAM_INVITE_ACCEPTED', `${user.email} joined as ${invitation.role}`, request);
+  await broadcastWorkspaceEvent(invitation.workspace_id, 'TEAM_UPDATE', { action: 'invite_accepted', user_id: String(userId), role: invitation.role });
   return jsonResponse(200, {
     success: true,
     message: `Joined ${workspace?.name || 'workspace'} as ${invitation.role}`,

@@ -7,10 +7,15 @@ import * as accessController from './controllers/accessController.js';
 import * as teamController from './controllers/teamController.js';
 import * as loaderController from './controllers/loaderController.js';
 import { jsonResponse, methodNotAllowed, notFound } from './utils/http.js';
+import { config } from './config.js';
 
 const routes = [
   // Health
   { method: 'GET', path: '/api/health', handler: async () => jsonResponse(200, { success: true, service: 'code_protector_aws' }) },
+  { method: 'GET', path: '/api/ws/config', handler: async () => jsonResponse(200, {
+    success: true,
+    endpoint: config.wsApiEndpoint ? String(config.wsApiEndpoint).replace(/^http/i, 'ws') : null
+  }) },
 
   // Auth
   { method: 'POST', path: '/api/login', handler: (req) => authController.login(req) },

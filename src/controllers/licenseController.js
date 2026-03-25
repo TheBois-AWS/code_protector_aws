@@ -6,6 +6,7 @@ import { licensesRepo, projectsRepo } from '../services/repositories.js';
 import { nowIso, randomId, sortByDateDesc } from '../utils/common.js';
 import { getWorkspaceAccess, hasPermission, resolveWorkspace } from '../utils/workspace.js';
 import { logAction } from './workspaceController.js';
+import { broadcastWorkspaceEvent } from '../utils/realtime.js';
 
 function randomLicenseKey(prefix = '', suffix = '') {
   return `${prefix}LIC-${crypto.randomUUID().split('-')[0].toUpperCase()}-${crypto.randomUUID().split('-')[1].toUpperCase()}${suffix}`;
@@ -69,6 +70,7 @@ export async function createLicense(request, workspaceIdentifier) {
   });
 
   await logAction(workspace.id, 'CREATE_LICENSE', `Created license ${license.key} for project ${projectId || 'ALL'}`, request);
+  await broadcastWorkspaceEvent(workspace.id, 'LICENSE_UPDATE', { action: 'create', license });
   return jsonResponse(200, { success: true, key: license.key, license });
 }
 
@@ -114,6 +116,7 @@ export async function batchCreateLicenses(request, workspaceIdentifier) {
   }
 
   await logAction(workspace.id, 'BATCH_CREATE_LICENSE', `Created ${licenses.length} licenses`, request);
+  await broadcastWorkspaceEvent(workspace.id, 'LICENSE_UPDATE', { action: 'batch_create', count: licenses.length });
   return jsonResponse(200, { success: true, licenses, count: licenses.length });
 }
 
@@ -156,6 +159,7 @@ export async function deleteLicense(request, licenseId) {
   const access = await getWorkspaceAccess(license.workspace_id, userId);
   if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(403, { success: false, error: 'Access denied' });
   await licensesRepo.delete(String(license.id));
+  await broadcastWorkspaceEvent(license.workspace_id, 'LICENSE_UPDATE', { action: 'delete', id: String(license.id) });
   return jsonResponse(200, { success: true });
 }
 
@@ -168,6 +172,7 @@ export async function toggleLicenseStatus(request, licenseId) {
   if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(403, { success: false, error: 'Access denied' });
   const updated = await licensesRepo.update(String(license.id), { is_active: Number(license.is_active) ? 0 : 1 });
   await logAction(license.workspace_id, 'TOGGLE_LICENSE', `${license.key} -> ${updated.is_active ? 'active' : 'inactive'}`, request);
+  await broadcastWorkspaceEvent(license.workspace_id, 'LICENSE_UPDATE', { action: 'toggle', id: String(license.id), is_active: Number(updated.is_active) });
   return jsonResponse(200, { success: true, is_active: updated.is_active });
 }
 
@@ -179,6 +184,7 @@ export async function toggleHwidLock(request, licenseId) {
   const access = await getWorkspaceAccess(license.workspace_id, userId);
   if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(403, { success: false, error: 'Access denied' });
   const updated = await licensesRepo.update(String(license.id), { hwid_lock: Number(license.hwid_lock) ? 0 : 1 });
+  await broadcastWorkspaceEvent(license.workspace_id, 'LICENSE_UPDATE', { action: 'toggle_hwid_lock', id: String(license.id), hwid_lock: Number(updated.hwid_lock) });
   return jsonResponse(200, { success: true, hwid_lock: updated.hwid_lock });
 }
 
@@ -190,5 +196,6 @@ export async function resetHwid(request, licenseId) {
   const access = await getWorkspaceAccess(license.workspace_id, userId);
   if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(403, { success: false, error: 'Access denied' });
   await licensesRepo.update(String(license.id), { activated_hwid: null, activated_os: null });
+  await broadcastWorkspaceEvent(license.workspace_id, 'LICENSE_UPDATE', { action: 'reset_hwid', id: String(license.id) });
   return jsonResponse(200, { success: true });
 }

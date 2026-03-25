@@ -156,6 +156,7 @@ Resources:
                   - !GetAtt LicensesTable.Arn
                   - !GetAtt AccessListsTable.Arn
                   - !GetAtt LogsTable.Arn
+                  - !GetAtt WebSocketConnectionsTable.Arn
                   - !GetAtt PinVerificationsTable.Arn
                   - !GetAtt RateLimitsTable.Arn
                   - !GetAtt AppConfigTable.Arn
@@ -168,7 +169,12 @@ Resources:
                   - !Sub '${LicensesTable.Arn}/index/*'
                   - !Sub '${AccessListsTable.Arn}/index/*'
                   - !Sub '${LogsTable.Arn}/index/*'
+                  - !Sub '${WebSocketConnectionsTable.Arn}/index/*'
                   - !Sub '${PinVerificationsTable.Arn}/index/*'
+              - Effect: Allow
+                Action:
+                  - execute-api:ManageConnections
+                Resource: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/${Stage}/POST/@connections/*'
               - Effect: Allow
                 Action:
                   - s3:GetObject
@@ -202,9 +208,11 @@ Resources:
           DDB_TABLE_LICENSES: !Ref LicensesTable
           DDB_TABLE_ACCESS_LISTS: !Ref AccessListsTable
           DDB_TABLE_LOGS: !Ref LogsTable
+          DDB_TABLE_WEBSOCKET_CONNECTIONS: !Ref WebSocketConnectionsTable
           DDB_TABLE_PIN_VERIFICATIONS: !Ref PinVerificationsTable
           DDB_TABLE_RATE_LIMITS: !Ref RateLimitsTable
           DDB_TABLE_APP_CONFIG: !Ref AppConfigTable
+          WS_API_ENDPOINT: !Sub 'https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
 
   ApiFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -354,6 +362,58 @@ Resources:
       FunctionName: !Ref ApiFunction
       Principal: '*'
       InvokedViaFunctionUrl: true
+
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-${Stage}-ws'
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: '$request.body.action'
+
+  WebSocketIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiFunction.Arn}/invocations'
+      IntegrationMethod: POST
+      PayloadFormatVersion: '2.0'
+
+  WebSocketConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: '$connect'
+      Target: !Sub 'integrations/${WebSocketIntegration}'
+
+  WebSocketDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: '$disconnect'
+      Target: !Sub 'integrations/${WebSocketIntegration}'
+
+  WebSocketDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${WebSocketIntegration}'
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: !Ref Stage
+      AutoDeploy: true
+
+  WebSocketLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*'
 
   SpaRewriteFunction:
     Type: AWS::CloudFront::Function
@@ -797,6 +857,40 @@ Resources:
           Projection:
             ProjectionType: ALL
 
+  WebSocketConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-websocket-connections'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: connection_id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: workspace_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connection_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserIndex
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: WorkspaceIndex
+          KeySchema:
+            - AttributeName: workspace_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
   PinVerificationsTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
@@ -867,6 +961,10 @@ Outputs:
     Value: !GetAtt ApiFunction.Arn
   ApiFunctionUrl:
     Value: !GetAtt ApiFunctionUrl.FunctionUrl
+  WebSocketApiId:
+    Value: !Ref WebSocketApi
+  WebSocketApiEndpoint:
+    Value: !Sub 'wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
   ApiFunctionLogGroupName:
     Condition: CreateApiFunctionLogGroup
     Value: !Ref ApiFunctionLogGroup
@@ -894,3 +992,5 @@ Outputs:
     Value: !Ref LicensesTable
   LogsTableName:
     Value: !Ref LogsTable
+  WebSocketConnectionsTableName:
+    Value: !Ref WebSocketConnectionsTable

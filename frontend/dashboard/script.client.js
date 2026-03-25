@@ -61,6 +61,138 @@ if (!token) {
 // Global State
 let allWorkspaces = [];
 let userProfile = null;
+let dashboardWs = null;
+let dashboardWsReconnectTimer = null;
+let dashboardWsEndpoint = null;
+let dashboardWsUserId = null;
+let dashboardWsShouldReconnect = true;
+let dashboardWsReconnectDelayMs = 2000;
+let dashboardRealtimeRefreshTimer = null;
+
+function scheduleDashboardRealtimeRefresh(delay = 300) {
+  if (dashboardRealtimeRefreshTimer) clearTimeout(dashboardRealtimeRefreshTimer);
+  dashboardRealtimeRefreshTimer = setTimeout(() => {
+    dashboardRealtimeRefreshTimer = null;
+    refreshDashboardData().catch((error) => {
+      console.error('Dashboard realtime refresh failed', error);
+    });
+  }, delay);
+}
+
+async function getDashboardWsEndpoint() {
+  if (dashboardWsEndpoint !== null) return dashboardWsEndpoint;
+  dashboardWsEndpoint = '';
+  try {
+    const res = await fetch('/api/ws/config', {
+      headers: { 'Authorization': token }
+    });
+    const data = await res.json();
+    if (data?.success && data.endpoint) {
+      dashboardWsEndpoint = String(data.endpoint);
+    }
+  } catch (error) {
+    dashboardWsEndpoint = null;
+    console.warn('WebSocket endpoint config unavailable', error);
+  }
+  return dashboardWsEndpoint;
+}
+
+function buildDashboardWsUrl(endpoint, userId) {
+  if (!endpoint || !userId) return '';
+  let normalized = String(endpoint).trim();
+  if (!normalized) return '';
+  if (normalized.startsWith('https://')) normalized = `wss://${normalized.slice(8)}`;
+  if (normalized.startsWith('http://')) normalized = `ws://${normalized.slice(7)}`;
+  if (!/^wss?:\/\//i.test(normalized)) return '';
+
+  const url = new URL(normalized);
+  url.searchParams.set('path', `/api/ws/user/${userId}`);
+  url.searchParams.set('token', token);
+  return url.toString();
+}
+
+function disconnectDashboardWebSocket({ allowReconnect = false } = {}) {
+  dashboardWsShouldReconnect = allowReconnect;
+  if (dashboardWsReconnectTimer) {
+    clearTimeout(dashboardWsReconnectTimer);
+    dashboardWsReconnectTimer = null;
+  }
+  if (!dashboardWs) return;
+  const socket = dashboardWs;
+  dashboardWs = null;
+  socket.onclose = null;
+  socket.onmessage = null;
+  socket.onerror = null;
+  try {
+    socket.close(1000, 'client_closed');
+  } catch {}
+}
+
+function scheduleDashboardWsReconnect() {
+  if (!dashboardWsShouldReconnect || dashboardWsReconnectTimer || !dashboardWsUserId) return;
+  const delay = dashboardWsReconnectDelayMs;
+  dashboardWsReconnectTimer = setTimeout(() => {
+    dashboardWsReconnectTimer = null;
+    connectDashboardWebSocket(dashboardWsUserId);
+  }, delay);
+  dashboardWsReconnectDelayMs = Math.min(delay * 2, 30000);
+}
+
+function handleDashboardWsMessage(raw) {
+  let message = null;
+  try {
+    message = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    return;
+  }
+  if (!message?.type) return;
+
+  if (message.type === 'WORKSPACE_UPDATE') {
+    scheduleDashboardRealtimeRefresh(200);
+    return;
+  }
+
+  if (message.type === 'PROFILE_UPDATE') {
+    scheduleDashboardRealtimeRefresh(250);
+    return;
+  }
+}
+
+async function connectDashboardWebSocket(userId) {
+  if (!userId) return;
+  dashboardWsUserId = String(userId);
+  if (dashboardWs && (dashboardWs.readyState === WebSocket.OPEN || dashboardWs.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  const endpoint = await getDashboardWsEndpoint();
+  const wsUrl = buildDashboardWsUrl(endpoint, dashboardWsUserId);
+  if (!wsUrl) {
+    scheduleDashboardWsReconnect();
+    return;
+  }
+
+  dashboardWsShouldReconnect = true;
+  const socket = new WebSocket(wsUrl);
+  dashboardWs = socket;
+
+  socket.onopen = () => {
+    dashboardWsReconnectDelayMs = 2000;
+  };
+
+  socket.onmessage = (event) => {
+    handleDashboardWsMessage(event.data);
+  };
+
+  socket.onclose = () => {
+    if (dashboardWs === socket) dashboardWs = null;
+    scheduleDashboardWsReconnect();
+  };
+
+  socket.onerror = (error) => {
+    console.error('Dashboard WebSocket error', error);
+  };
+}
 
 function updateStatsFromLocal() {
   document.getElementById('statsWorkspaces').textContent = allWorkspaces.length;
@@ -169,6 +301,7 @@ function showPanel(panelId, navEl) {
 }
 
 function logout() {
+  disconnectDashboardWebSocket({ allowReconnect: false });
   localStorage.removeItem('token');
   window.location.href = '/login';
 }
@@ -182,6 +315,7 @@ async function loadUserProfile() {
     
     // Handle expired/invalid token
     if (res.status === 401 || res.status === 403) {
+      disconnectDashboardWebSocket({ allowReconnect: false });
       localStorage.removeItem('token');
       window.location.href = '/login';
       return;
@@ -191,6 +325,7 @@ async function loadUserProfile() {
     
     if (data.success) {
       userProfile = data.user;
+      connectDashboardWebSocket(data.user.id);
       
       // Update sidebar
       document.getElementById('sidebarUsername').textContent = data.user.display_name || 'User';
@@ -625,4 +760,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.target === modal) modal.style.display = 'none';
     });
   });
+});
+
+window.addEventListener('beforeunload', () => {
+  disconnectDashboardWebSocket({ allowReconnect: false });
 });

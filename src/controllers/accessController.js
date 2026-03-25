@@ -4,6 +4,7 @@ import { accessListsRepo } from '../services/repositories.js';
 import { nowIso, randomId, sortByDateDesc } from '../utils/common.js';
 import { getWorkspaceAccess, hasPermission, listWorkspaceAccessRules, resolveWorkspace } from '../utils/workspace.js';
 import { logAction } from './workspaceController.js';
+import { broadcastWorkspaceEvent } from '../utils/realtime.js';
 
 export async function listAccessRules(request, workspaceIdentifier) {
   const userId = await getUserIdFromRequest(request);
@@ -36,6 +37,7 @@ export async function createAccessRule(request, workspaceIdentifier) {
     created_at: nowIso()
   });
   await logAction(workspace.id, 'CREATE_ACCESS_RULE', `Created access rule [${rule.type}] ${rule.identifier}`, request);
+  await broadcastWorkspaceEvent(workspace.id, 'ACCESS_UPDATE', { action: 'create', rule });
   return jsonResponse(200, { success: true, rule });
 }
 
@@ -50,5 +52,6 @@ export async function deleteAccessRule(request, ruleId) {
 
   await accessListsRepo.delete(String(rule.id));
   await logAction(rule.workspace_id, 'DELETE_ACCESS_RULE', `Deleted access rule [${rule.type}] ${rule.identifier}`, request);
+  await broadcastWorkspaceEvent(rule.workspace_id, 'ACCESS_UPDATE', { action: 'delete', id: String(rule.id) });
   return jsonResponse(200, { success: true });
 }

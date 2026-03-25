@@ -9,6 +9,7 @@ import { encryptAES } from '../utils/crypto.js';
 import { nowIso, randomId } from '../utils/common.js';
 import { getWorkspaceAccess, hasPermission, resolveWorkspace } from '../utils/workspace.js';
 import { logAction } from './workspaceController.js';
+import { broadcastWorkspaceEvent } from '../utils/realtime.js';
 
 function compressContent(content) {
   return gzipSync(Buffer.from(content, 'utf-8')).toString('base64');
@@ -114,6 +115,7 @@ export async function createProject(request, workspaceIdentifier) {
   });
 
   await logAction(workspace.id, 'CREATE_PROJECT', `Created project ${project.name}`, request);
+  await broadcastWorkspaceEvent(workspace.id, 'PROJECT_UPDATE', { action: 'create', project: { id: project.id, name: project.name, secret_key: project.secret_key } });
   return jsonResponse(200, { success: true, id: project.id, secret_key: project.secret_key, status: project.status });
 }
 
@@ -151,6 +153,7 @@ export async function updateProject(request, projectIdentifier) {
   }
 
   await logAction(projectAccess.workspaceId, 'UPDATE_PROJECT', `Updated project ${projectAccess.project.id}`, request);
+  await broadcastWorkspaceEvent(projectAccess.workspaceId, 'PROJECT_UPDATE', { action: 'update', project: { id: projectAccess.project.id, secret_key: projectAccess.project.secret_key } });
   return jsonResponse(200, { success: true, status: 'approved', compressed_size: stored.compressedSize });
 }
 
@@ -173,6 +176,7 @@ export async function deleteProject(request, projectIdentifier) {
   }
   await projectsRepo.delete(String(projectAccess.project.id));
   await logAction(projectAccess.workspaceId, 'DELETE_PROJECT', `Deleted project ${projectAccess.project.id}`, request);
+  await broadcastWorkspaceEvent(projectAccess.workspaceId, 'PROJECT_UPDATE', { action: 'delete', id: projectAccess.project.id, secret_key: projectAccess.project.secret_key });
   return jsonResponse(200, { success: true });
 }
 
@@ -184,6 +188,7 @@ export async function toggleProjectActive(request, projectIdentifier) {
   if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(403, { success: false, error: 'Access denied' });
   const updated = await projectsRepo.update(String(projectAccess.project.id), { is_active: Number(projectAccess.project.is_active) ? 0 : 1 });
   await logAction(projectAccess.workspaceId, 'TOGGLE_PROJECT', `Set project ${projectAccess.project.id} active to ${updated.is_active}`, request);
+  await broadcastWorkspaceEvent(projectAccess.workspaceId, 'PROJECT_UPDATE', { action: 'toggle_active', id: projectAccess.project.id, is_active: Number(updated.is_active) });
   return jsonResponse(200, { success: true, is_active: !!Number(updated.is_active) });
 }
 
@@ -204,6 +209,7 @@ export async function updateProjectSettings(request, projectIdentifier) {
     rate_limit: payload.rate_limit !== undefined ? Number(payload.rate_limit || 30) : Number(projectAccess.project.rate_limit || 30)
   });
   await logAction(projectAccess.workspaceId, 'UPDATE_PROJECT_SETTINGS', `Updated settings for project ${projectAccess.project.id}`, request);
+  await broadcastWorkspaceEvent(projectAccess.workspaceId, 'PROJECT_UPDATE', { action: 'settings_update', id: projectAccess.project.id });
   return jsonResponse(200, { success: true, ...updated });
 }
 
@@ -215,6 +221,7 @@ export async function resetProjectStats(request, projectIdentifier) {
   if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(403, { success: false, error: 'Access denied' });
   await projectsRepo.update(String(projectAccess.project.id), { execution_count: 0 });
   await logAction(projectAccess.workspaceId, 'RESET_PROJECT_STATS', `Reset stats for project ${projectAccess.project.id}`, request);
+  await broadcastWorkspaceEvent(projectAccess.workspaceId, 'PROJECT_UPDATE', { action: 'reset_stats', id: projectAccess.project.id });
   return jsonResponse(200, { success: true });
 }
 
@@ -228,6 +235,7 @@ export async function renameProject(request, projectIdentifier) {
   if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(403, { success: false, error: 'Access denied' });
   await projectsRepo.update(String(projectAccess.project.id), { name: String(payload.name) });
   await logAction(projectAccess.workspaceId, 'RENAME_PROJECT', `Renamed project ${projectAccess.project.id} to ${payload.name}`, request);
+  await broadcastWorkspaceEvent(projectAccess.workspaceId, 'PROJECT_UPDATE', { action: 'rename', id: projectAccess.project.id, name: String(payload.name) });
   return jsonResponse(200, { success: true });
 }
 

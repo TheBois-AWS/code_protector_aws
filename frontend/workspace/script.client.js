@@ -342,6 +342,12 @@ let currentUserRole = 'viewer'; // Current user's role in this workspace
 let isLoadingWorkspace = false; // Lock to prevent multiple simultaneous loads
 let pinVerified = false; // Track if PIN was already verified this session
 let privacyModeEnabled = localStorage.getItem('privacyMode') === 'true'; // Privacy blur protection
+let workspaceWs = null;
+let workspaceWsReconnectTimer = null;
+let workspaceWsShouldReconnect = true;
+let workspaceWsEndpoint = null;
+let workspaceWsReconnectDelayMs = 2000;
+const realtimeRefreshTimers = new Map();
 const PANEL_STATE_KEYS = {
     settingsCollapsed: `workspace:${workspaceIdentifier}:settingsPanelCollapsed`,
     detailsCollapsed: `workspace:${workspaceIdentifier}:detailsPanelCollapsed`,
@@ -364,6 +370,8 @@ function hasPermission(permission) {
 
 // Handle authentication errors - clear all auth data and redirect to login
 function handleAuthError() {
+    disconnectWorkspaceWebSocket({ allowReconnect: false });
+
     // Clear all auth-related localStorage items
     localStorage.removeItem('token');
 
@@ -395,6 +403,228 @@ function debounce(func, wait, key) {
         } finally {
             setTimeout(() => pendingRequests.delete(key), wait);
         }
+    };
+}
+
+function scheduleRealtimeRefresh(key, callback, delay = 300) {
+    const activeTimer = realtimeRefreshTimers.get(key);
+    if (activeTimer) clearTimeout(activeTimer);
+    const nextTimer = setTimeout(async () => {
+        realtimeRefreshTimers.delete(key);
+        try {
+            await callback();
+        } catch (error) {
+            console.error(`[realtime:${key}] refresh failed`, error);
+        }
+    }, delay);
+    realtimeRefreshTimers.set(key, nextTimer);
+}
+
+async function getWorkspaceWsEndpoint() {
+    if (workspaceWsEndpoint !== null) return workspaceWsEndpoint;
+    workspaceWsEndpoint = '';
+    try {
+        const res = await fetch('/api/ws/config', {
+            headers: { 'Authorization': token }
+        });
+        const data = await res.json();
+        if (data?.success && data.endpoint) {
+            workspaceWsEndpoint = String(data.endpoint);
+        }
+    } catch (error) {
+        workspaceWsEndpoint = null;
+        console.warn('WebSocket endpoint config unavailable', error);
+    }
+    return workspaceWsEndpoint;
+}
+
+function buildWorkspaceWsUrl(endpoint) {
+    if (!endpoint) return '';
+    let normalized = String(endpoint).trim();
+    if (!normalized) return '';
+    if (normalized.startsWith('https://')) normalized = `wss://${normalized.slice(8)}`;
+    if (normalized.startsWith('http://')) normalized = `ws://${normalized.slice(7)}`;
+    if (!/^wss?:\/\//i.test(normalized)) return '';
+
+    const url = new URL(normalized);
+    url.searchParams.set('path', `/api/ws/logs/${workspaceIdentifier}`);
+    url.searchParams.set('token', token);
+    return url.toString();
+}
+
+function disconnectWorkspaceWebSocket({ allowReconnect = false } = {}) {
+    workspaceWsShouldReconnect = allowReconnect;
+    if (workspaceWsReconnectTimer) {
+        clearTimeout(workspaceWsReconnectTimer);
+        workspaceWsReconnectTimer = null;
+    }
+    if (!workspaceWs) return;
+    const socket = workspaceWs;
+    workspaceWs = null;
+    socket.onclose = null;
+    socket.onmessage = null;
+    socket.onerror = null;
+    try {
+        socket.close(1000, 'client_closed');
+    } catch {}
+}
+
+function scheduleWorkspaceWsReconnect() {
+    if (!workspaceWsShouldReconnect || workspaceWsReconnectTimer) return;
+    const delay = workspaceWsReconnectDelayMs;
+    workspaceWsReconnectTimer = setTimeout(() => {
+        workspaceWsReconnectTimer = null;
+        connectWorkspaceWebSocket();
+    }, delay);
+    workspaceWsReconnectDelayMs = Math.min(delay * 2, 30000);
+}
+
+function prependLog(logEntry) {
+    if (!logEntry) return;
+    logs.unshift(logEntry);
+    if (logs.length > 200) logs.length = 200;
+    if (document.getElementById('view-logs')?.classList.contains('active')) {
+        renderLogsList();
+    }
+    if (document.getElementById('view-overview')?.classList.contains('active')) {
+        renderChart();
+    }
+}
+
+async function refreshCurrentProjectFileTree() {
+    if (!currentProjectKey) return;
+    const project = projects.find((item) =>
+        String(item.secret_key) === String(currentProjectKey) || String(item.id) === String(currentProjectKey)
+    );
+    if (!project?.id) return;
+
+    try {
+        const res = await fetch(`/api/projects/${project.id}/files`, {
+            headers: { 'Authorization': token }
+        });
+        const data = await res.json();
+        if (!data.success) return;
+
+        projectFiles = data.files || [];
+        fileTree = buildFileTree(projectFiles);
+        renderFileTree();
+
+        const availableIds = new Set(projectFiles.map((file) => String(file.id)));
+        openTabs = openTabs.filter((tab) => availableIds.has(String(tab.fileId)));
+        if (activeFileId && !availableIds.has(String(activeFileId))) {
+            activeFileId = null;
+        }
+        renderTabs();
+    } catch (error) {
+        console.error('Failed to refresh file tree from realtime event', error);
+    }
+}
+
+function handleWorkspaceWsMessage(raw) {
+    let message = null;
+    try {
+        message = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch {
+        return;
+    }
+    if (!message?.type) return;
+
+    const data = message.data || {};
+    switch (message.type) {
+        case 'LOG':
+            prependLog(data);
+            break;
+        case 'PROJECT_UPDATE':
+            scheduleRealtimeRefresh('workspace-projects', async () => {
+                await loadWorkspaceData();
+                if (document.getElementById('view-overview')?.classList.contains('active')) {
+                    await updateOverviewStats();
+                }
+            }, 250);
+            break;
+        case 'PROJECT_FILE_UPDATE':
+            scheduleRealtimeRefresh('workspace-file-tree', refreshCurrentProjectFileTree, 250);
+            break;
+        case 'LICENSE_UPDATE':
+            scheduleRealtimeRefresh('workspace-licenses', async () => {
+                await loadLicenses(false, true);
+                if (document.getElementById('view-overview')?.classList.contains('active')) {
+                    await updateOverviewStats();
+                }
+            }, 300);
+            break;
+        case 'ACCESS_UPDATE':
+            scheduleRealtimeRefresh('workspace-access', async () => {
+                await loadAccessList(false, true);
+                if (document.getElementById('view-overview')?.classList.contains('active')) {
+                    await updateOverviewStats();
+                }
+            }, 300);
+            break;
+        case 'TEAM_UPDATE':
+            if (document.getElementById('view-team')?.classList.contains('active')) {
+                scheduleRealtimeRefresh('workspace-team', loadTeam, 250);
+            }
+            break;
+        case 'SETTINGS_UPDATE':
+            if (Object.prototype.hasOwnProperty.call(data, 'default_project_id')) {
+                workspaceData.default_project_id = data.default_project_id;
+            }
+            if (Object.prototype.hasOwnProperty.call(data, 'discord_webhook')) {
+                workspaceData.discord_webhook = data.discord_webhook;
+            }
+            if (document.getElementById('view-settings')?.classList.contains('active')) {
+                loadSettings();
+            }
+            break;
+        case 'LOGS_CLEARED':
+            logs = [];
+            if (document.getElementById('view-logs')?.classList.contains('active')) {
+                renderLogsList();
+            }
+            if (document.getElementById('view-overview')?.classList.contains('active')) {
+                renderChart();
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+async function connectWorkspaceWebSocket() {
+    if (!workspaceIdentifier || !token) return;
+    if (typeof checkPinRequired === 'function' && checkPinRequired()) return;
+
+    if (workspaceWs && (workspaceWs.readyState === WebSocket.OPEN || workspaceWs.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+
+    const endpoint = await getWorkspaceWsEndpoint();
+    const wsUrl = buildWorkspaceWsUrl(endpoint);
+    if (!wsUrl) {
+        scheduleWorkspaceWsReconnect();
+        return;
+    }
+
+    workspaceWsShouldReconnect = true;
+    const socket = new WebSocket(wsUrl);
+    workspaceWs = socket;
+
+    socket.onopen = () => {
+        workspaceWsReconnectDelayMs = 2000;
+    };
+
+    socket.onmessage = (event) => {
+        handleWorkspaceWsMessage(event.data);
+    };
+
+    socket.onclose = () => {
+        if (workspaceWs === socket) workspaceWs = null;
+        scheduleWorkspaceWsReconnect();
+    };
+
+    socket.onerror = (error) => {
+        console.error('Workspace WebSocket error', error);
     };
 }
 
@@ -651,6 +881,7 @@ async function loadWorkspaceData() {
         // Check if PIN verification is required
         if (data.requirePin && !pinVerified) {
             console.log('[loadWorkspaceData] PIN required, clearing UI and showing modal');
+            disconnectWorkspaceWebSocket({ allowReconnect: false });
             projects = []; // Don't load scripts until PIN verified
             renderFileList(); // Clear the file list UI
             showPinVerifyModal();
@@ -662,6 +893,7 @@ async function loadWorkspaceData() {
 
         // Hide PIN modal if it was showing
         document.getElementById('pinVerifyModal').style.display = 'none';
+        connectWorkspaceWebSocket();
 
         projects = data.projects;
 
@@ -686,6 +918,7 @@ async function loadWorkspaceData() {
 
         // Don't override initial view from URL - it's set in Monaco init callback
     } catch (e) {
+        disconnectWorkspaceWebSocket({ allowReconnect: false });
         showAlert('Error', 'Error loading workspace: ' + e.message);
         window.location.href = '/dashboard';
     } finally {
@@ -2117,7 +2350,7 @@ async function saveSettings() {
     const webhook = document.getElementById('discordWebhook').value;
 
     try {
-        await fetch(`/api/workspaces/${workspaceIdentifier}/settings`, {
+        const res = await fetch(`/api/workspaces/${workspaceIdentifier}/settings`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', 'Authorization': token },
             body: JSON.stringify({
@@ -2125,8 +2358,20 @@ async function saveSettings() {
                 discord_webhook: webhook || null
             })
         });
-        // No need to reload, WS will handle it
+
+        const data = await res.json();
+        if (!data.success) {
+            showAlert('Error', data.error || 'Error updating settings');
+            return;
+        }
+
+        workspaceData.default_project_id = projectKey || null;
+        workspaceData.discord_webhook = webhook || null;
         showAlert('Success', 'Settings saved successfully');
+
+        if (!workspaceWs || workspaceWs.readyState !== WebSocket.OPEN) {
+            await loadWorkspaceData();
+        }
     } catch (e) {
         showAlert('Error', 'Error updating settings');
     }
@@ -5193,4 +5438,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.target === modal) modal.style.display = 'none';
         });
     });
+});
+
+window.addEventListener('beforeunload', () => {
+    disconnectWorkspaceWebSocket({ allowReconnect: false });
 });

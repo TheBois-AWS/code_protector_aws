@@ -11,6 +11,7 @@
     "dev": "node --watch src/local.js"
   },
   "dependencies": {
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.1016.0",
     "@aws-sdk/client-dynamodb": "^3.888.0",
     "@aws-sdk/client-s3": "^3.888.0",
     "@aws-sdk/lib-dynamodb": "^3.888.0"

@@ -14,6 +14,8 @@ Required DynamoDB GSIs for production efficiency:
 - licenses.key-index (key)
 - access_lists.workspace_id-index (workspace_id)
 - logs.workspace_id-index (workspace_id)
+- websocket_connections.user_id-index (user_id)
+- websocket_connections.workspace_id-index (workspace_id)
 - pin_verifications.workspace_id-index (workspace_id)
 
 The helpers below fall back to Scan when an index is unavailable so local development can still work.
@@ -123,6 +125,7 @@ const projectFilesBase = createStandardRepo(config.tables.projectFiles);
 const licensesBase = createStandardRepo(config.tables.licenses);
 const accessBase = createStandardRepo(config.tables.accessLists);
 const logsBase = createStandardRepo(config.tables.logs);
+const websocketConnectionsBase = createStandardRepo(config.tables.websocketConnections, 'connection_id');
 const pinBase = createStandardRepo(config.tables.pinVerifications, 'token');
 
 export const usersRepo = {
@@ -207,6 +210,33 @@ export const logsRepo = {
   ...logsBase,
   async listByWorkspace(workspaceId) {
     return await queryByField(config.tables.logs, config.indexes.logsByWorkspace, 'workspace_id', workspaceId);
+  }
+};
+
+export const websocketConnectionsRepo = {
+  ...websocketConnectionsBase,
+  async getByConnectionId(connectionId) {
+    return await websocketConnectionsBase.getById(String(connectionId));
+  },
+  async putConnection(connection) {
+    return await websocketConnectionsBase.put({
+      connection_id: String(connection.connection_id),
+      user_id: String(connection.user_id),
+      workspace_id: connection.workspace_id ? String(connection.workspace_id) : undefined,
+      channel: connection.channel ? String(connection.channel) : 'workspace',
+      endpoint: connection.endpoint ? String(connection.endpoint) : '',
+      created_at: connection.created_at,
+      expires_at: connection.expires_at
+    });
+  },
+  async deleteByConnectionId(connectionId) {
+    await websocketConnectionsBase.delete(String(connectionId));
+  },
+  async listByUser(userId) {
+    return await queryByField(config.tables.websocketConnections, config.indexes.websocketByUser, 'user_id', String(userId));
+  },
+  async listByWorkspace(workspaceId) {
+    return await queryByField(config.tables.websocketConnections, config.indexes.websocketByWorkspace, 'workspace_id', String(workspaceId));
   }
 };
 

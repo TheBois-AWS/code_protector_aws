@@ -7,9 +7,10 @@ import { nowIso, randomId, sortByDateDesc } from '../utils/common.js';
 import { storage } from '../services/storage.js';
 import { getWorkspaceAccess, hasPermission, listWorkspaceLogs, listWorkspaceMembers, listWorkspaceProjects, resolveWorkspace } from '../utils/workspace.js';
 import { config } from '../config.js';
+import { broadcastUserEvent, broadcastWorkspaceEvent } from '../utils/realtime.js';
 
 export async function logAction(workspaceId, action, details, request, country = 'Unknown') {
-  await logsRepo.create({
+  const logEntry = {
     id: randomId(),
     workspace_id: workspaceId ? String(workspaceId) : null,
     action,
@@ -18,7 +19,11 @@ export async function logAction(workspaceId, action, details, request, country =
     country,
     timestamp: Date.now(),
     created_at: nowIso()
-  });
+  };
+  await logsRepo.create(logEntry);
+  if (workspaceId) {
+    await broadcastWorkspaceEvent(workspaceId, 'LOG', logEntry);
+  }
 }
 
 async function deleteProjectStorage(projectId) {
@@ -154,6 +159,10 @@ export async function createWorkspace(request) {
   });
 
   await logAction(workspace.id, 'CREATE_WORKSPACE', `Created workspace \"${workspace.name}\"`, request);
+  await broadcastUserEvent(userId, 'WORKSPACE_UPDATE', {
+    action: 'create',
+    workspace: sanitizeWorkspace(workspace)
+  });
   return jsonResponse(200, { success: true, workspace: sanitizeWorkspace(workspace) });
 }
 
@@ -244,6 +253,11 @@ export async function updateWorkspaceSettings(request, identifier) {
   });
 
   await logAction(workspace.id, 'UPDATE_WORKSPACE_SETTINGS', 'Updated workspace settings', request);
+  await broadcastWorkspaceEvent(workspace.id, 'SETTINGS_UPDATE', {
+    default_project_id: updated.default_project_id || null,
+    default_script_id: updated.default_script_id || null,
+    discord_webhook: updated.discord_webhook || ''
+  });
   return jsonResponse(200, { success: true, workspace: sanitizeWorkspace(updated) });
 }
 
@@ -255,6 +269,10 @@ export async function deleteWorkspace(request, identifier) {
   if (String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Access denied' });
 
   await destroyWorkspaceData(String(workspace.id));
+  await broadcastUserEvent(userId, 'WORKSPACE_UPDATE', {
+    action: 'delete',
+    id: String(workspace.id)
+  });
   return jsonResponse(200, { success: true });
 }
 
@@ -284,6 +302,7 @@ export async function clearWorkspaceLogs(request, identifier) {
     await logsRepo.delete(String(item.id));
   }
   await logAction(workspace.id, 'CLEAR_LOGS', 'Cleared workspace logs', request);
+  await broadcastWorkspaceEvent(workspace.id, 'LOGS_CLEARED', { workspace_id: String(workspace.id) });
   return jsonResponse(200, { success: true });
 }
 

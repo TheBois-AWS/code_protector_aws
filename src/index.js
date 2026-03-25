@@ -1,5 +1,6 @@
-﻿import { routeRequest } from './router.js';
+import { routeRequest } from './router.js';
 import { getCorsHeaders, jsonResponse } from './utils/http.js';
+import { handleWebSocketEvent } from './websocket.js';
 
 function normalizeHeaders(rawHeaders = {}) {
   const normalized = {};
@@ -43,6 +44,10 @@ function normalizeEvent(event = {}) {
   };
 }
 
+function isWebSocketEvent(event = {}) {
+  return !!(event?.requestContext?.connectionId && event?.requestContext?.routeKey);
+}
+
 function applyCors(response, headers) {
   const corsHeaders = getCorsHeaders(headers);
   return {
@@ -55,6 +60,10 @@ function applyCors(response, headers) {
 }
 
 export async function handler(event) {
+  if (isWebSocketEvent(event)) {
+    return await handleWebSocketEvent(event);
+  }
+
   const request = normalizeEvent(event);
 
   if (request.method === 'OPTIONS') {

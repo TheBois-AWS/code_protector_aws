@@ -2,6 +2,7 @@ export const config = {
   appName: process.env.APP_NAME || 'code_protector_aws',
   port: Number(process.env.PORT || 3001),
   baseUrl: process.env.APP_BASE_URL || '',
+  wsApiEndpoint: process.env.WS_API_ENDPOINT || process.env.WEBSOCKET_API_ENDPOINT || '',
   allowedOrigins: (process.env.ALLOWED_ORIGINS || '*').split(',').map((value) => value.trim()).filter(Boolean),
   s3Bucket: process.env.APP_S3_BUCKET || process.env.S3_BUCKET || process.env.CONTENT_BUCKET || '',
   assetsBucket: process.env.APP_ASSETS_BUCKET || process.env.ASSETS_BUCKET || process.env.CONTENT_BUCKET || '',
@@ -17,6 +18,7 @@ export const config = {
     licenses: process.env.DDB_TABLE_LICENSES || process.env.DDB_LICENSES_TABLE || 'licenses',
     accessLists: process.env.DDB_TABLE_ACCESS_LISTS || process.env.DDB_ACCESS_LISTS_TABLE || 'access_lists',
     logs: process.env.DDB_TABLE_LOGS || process.env.DDB_LOGS_TABLE || 'logs',
+    websocketConnections: process.env.DDB_TABLE_WEBSOCKET_CONNECTIONS || process.env.DDB_WEBSOCKET_CONNECTIONS_TABLE || 'websocket_connections',
     pinVerifications: process.env.DDB_TABLE_PIN_VERIFICATIONS || process.env.DDB_PIN_VERIFICATIONS_TABLE || 'pin_verifications',
     rateLimits: process.env.DDB_TABLE_RATE_LIMITS || process.env.DDB_RATE_LIMITS_TABLE || 'rate_limits',
     appConfig: process.env.DDB_TABLE_APP_CONFIG || process.env.DDB_APP_CONFIG_TABLE || 'app_config'
@@ -36,6 +38,8 @@ export const config = {
     licensesByKey: process.env.DDB_INDEX_LICENSES_BY_KEY || 'KeyIndex',
     accessByWorkspace: process.env.DDB_INDEX_ACCESS_BY_WORKSPACE || 'WorkspaceIndex',
     logsByWorkspace: process.env.DDB_INDEX_LOGS_BY_WORKSPACE || 'WorkspaceIndex',
+    websocketByUser: process.env.DDB_INDEX_WEBSOCKET_BY_USER || 'UserIndex',
+    websocketByWorkspace: process.env.DDB_INDEX_WEBSOCKET_BY_WORKSPACE || 'WorkspaceIndex',
     pinByWorkspace: process.env.DDB_INDEX_PIN_BY_WORKSPACE || 'WorkspaceIndex'
   }
 };

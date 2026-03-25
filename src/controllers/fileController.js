@@ -9,6 +9,7 @@ import { decryptAES, encryptAES } from '../utils/crypto.js';
 import { nowIso, randomId } from '../utils/common.js';
 import { getWorkspaceAccess, hasPermission, resolveWorkspace } from '../utils/workspace.js';
 import { detectLanguage, getProjectAccess } from './projectController.js';
+import { broadcastWorkspaceEvent } from '../utils/realtime.js';
 
 function compressContent(content) {
   return gzipSync(Buffer.from(content, 'utf-8')).toString('base64');
@@ -174,6 +175,16 @@ export async function createFile(request, projectIdentifier) {
     created_at: nowIso(),
     updated_at: nowIso()
   });
+  await broadcastWorkspaceEvent(access.workspaceId, 'PROJECT_FILE_UPDATE', {
+    action: 'create',
+    projectId: access.project.id,
+    file: {
+      id: file.id,
+      name: file.name,
+      type: file.type,
+      parent_id: file.parent_id
+    }
+  });
   return jsonResponse(200, { success: true, file });
 }
 
@@ -190,13 +201,20 @@ export async function updateFileContent(request, projectIdentifier, fileId) {
   const file = await projectFilesRepo.getById(String(fileId));
   if (!file || String(file.project_id) !== String(access.project.id) || file.type === 'folder') return jsonResponse(404, { success: false, error: 'File not found' });
   const stored = await storeFileContent(access.project, access.workspaceId, String(payload.content), file.content);
+  const updatedAt = nowIso();
   await projectFilesRepo.update(String(file.id), {
     content: stored.contentRef,
     is_encrypted: stored.isEncrypted,
     size: stored.size,
-    updated_at: nowIso()
+    updated_at: updatedAt
   });
-  return jsonResponse(200, { success: true, size: stored.size, updated_at: nowIso() });
+  await broadcastWorkspaceEvent(access.workspaceId, 'PROJECT_FILE_UPDATE', {
+    action: 'update',
+    projectId: access.project.id,
+    fileId: file.id,
+    size: stored.size
+  });
+  return jsonResponse(200, { success: true, size: stored.size, updated_at: updatedAt });
 }
 
 export async function renameFile(request, projectIdentifier, fileId) {
@@ -214,6 +232,12 @@ export async function renameFile(request, projectIdentifier, fileId) {
     return jsonResponse(400, { success: false, error: 'A file or folder with this name already exists' });
   }
   await projectFilesRepo.update(String(file.id), { name: String(payload.name), language: file.type === 'file' ? detectLanguage(payload.name) : file.language, updated_at: nowIso() });
+  await broadcastWorkspaceEvent(access.workspaceId, 'PROJECT_FILE_UPDATE', {
+    action: 'rename',
+    projectId: access.project.id,
+    fileId: file.id,
+    name: String(payload.name)
+  });
   return jsonResponse(200, { success: true });
 }
 
@@ -237,6 +261,12 @@ export async function moveFile(request, projectIdentifier, fileId) {
     return jsonResponse(400, { success: false, error: 'A file or folder with this name already exists in the target' });
   }
   await projectFilesRepo.update(String(file.id), { parent_id: targetParentId, updated_at: nowIso() });
+  await broadcastWorkspaceEvent(access.workspaceId, 'PROJECT_FILE_UPDATE', {
+    action: 'move',
+    projectId: access.project.id,
+    fileId: file.id,
+    parent_id: targetParentId || null
+  });
   return jsonResponse(200, { success: true });
 }
 
@@ -257,6 +287,12 @@ export async function deleteFile(request, projectIdentifier, fileId) {
     }
     await projectFilesRepo.delete(String(item.id));
   }
+  await broadcastWorkspaceEvent(access.workspaceId, 'PROJECT_FILE_UPDATE', {
+    action: 'delete',
+    projectId: access.project.id,
+    fileId: file.id,
+    deleted: toDelete.map((item) => String(item.id))
+  });
   return jsonResponse(200, { success: true });
 }
 
@@ -294,6 +330,11 @@ export async function uploadFile(request, projectIdentifier) {
     });
     created.push({ id: file.id, name: file.name, size: file.size, language: file.language });
   }
+  await broadcastWorkspaceEvent(access.workspaceId, 'PROJECT_FILE_UPDATE', {
+    action: 'bulk_create',
+    projectId: access.project.id,
+    count: created.length
+  });
   return jsonResponse(200, { success: true, files: created });
 }
 
@@ -390,6 +431,12 @@ export async function copyFile(request, projectIdentifier, fileId) {
   }
 
   const copied = await duplicateNode(file, normalizeParentId(file.parent_id), newName);
+  await broadcastWorkspaceEvent(access.workspaceId, 'PROJECT_FILE_UPDATE', {
+    action: 'copy',
+    projectId: access.project.id,
+    fileId: file.id,
+    copiedId: copied.id
+  });
   return jsonResponse(200, { success: true, file: { id: copied.id, name: copied.name } });
 }
 
@@ -405,6 +452,11 @@ export async function setEntryPoint(request, projectIdentifier, fileId) {
     if (file.type === 'file' && Number(file.is_entry_point) === 1) await projectFilesRepo.update(String(file.id), { is_entry_point: 0, updated_at: nowIso() });
   }
   await projectFilesRepo.update(String(target.id), { is_entry_point: 1, updated_at: nowIso() });
+  await broadcastWorkspaceEvent(access.workspaceId, 'PROJECT_FILE_UPDATE', {
+    action: 'entry_point',
+    projectId: access.project.id,
+    fileId: target.id
+  });
   return jsonResponse(200, { success: true });
 }
 
@@ -423,6 +475,11 @@ export async function batchOperation(request, projectIdentifier) {
       const response = await deleteFile(request, access.project.id, id);
       if (response.statusCode === 200) deleted += 1;
     }
+    await broadcastWorkspaceEvent(access.workspaceId, 'PROJECT_FILE_UPDATE', {
+      action: 'bulk_delete',
+      projectId: access.project.id,
+      count: deleted
+    });
     return jsonResponse(200, { success: true, deleted });
   }
 
@@ -435,6 +492,11 @@ export async function batchOperation(request, projectIdentifier) {
       const response = await moveFile({ ...request, body: JSON.stringify(movePayload) }, access.project.id, id);
       if (response.statusCode === 200) moved += 1;
     }
+    await broadcastWorkspaceEvent(access.workspaceId, 'PROJECT_FILE_UPDATE', {
+      action: 'bulk_move',
+      projectId: access.project.id,
+      count: moved
+    });
     return jsonResponse(200, { success: true, moved });
   }
 
