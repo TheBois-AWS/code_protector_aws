@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Error Catalog | Code Protector AWS Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/docs/assets/docs.css">
+</head>
+<body>
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <div class="docs-brand">
+        <a href="/docs">
+          <h1>Code Protector AWS</h1>
+          <p>Public Documentation</p>
+        </a>
+      </div>
+      <div class="docs-search-wrap">
+        <input id="docsSearch" class="docs-search" type="search" placeholder="Search docs..." aria-label="Search docs">
+        <div id="searchResults" class="search-results"></div>
+      </div>
+      <nav id="docsNav" class="docs-nav" aria-label="Documentation Navigation"></nav>
+    </aside>
+
+    <main class="docs-main">
+      <article class="docs-content">
+        <h1>Error Catalog</h1>
+        <p>
+          Most API errors follow a shared JSON structure:
+          <code>{"success": false, "error": "message"}</code>
+        </p>
+
+        <h2>HTTP Status Guide</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Typical Meaning</th>
+                <th>Client Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>400</td>
+                <td>Invalid payload, missing required fields, or malformed parameters.</td>
+                <td>Fix request data and retry.</td>
+              </tr>
+              <tr>
+                <td>401</td>
+                <td>Invalid or expired auth token.</td>
+                <td>Clear auth state and redirect to login.</td>
+              </tr>
+              <tr>
+                <td>403</td>
+                <td>Permission denied or missing PIN verification token.</td>
+                <td>Show role/PIN guidance and stop mutation flow.</td>
+              </tr>
+              <tr>
+                <td>404</td>
+                <td>Entity not found (workspace, project, file, license, invitation).</td>
+                <td>Refresh current listing and show not-found UX.</td>
+              </tr>
+              <tr>
+                <td>405</td>
+                <td>Method not allowed for route.</td>
+                <td>Fix method usage in client/integration.</td>
+              </tr>
+              <tr>
+                <td>429</td>
+                <td>Rate limit exceeded on protected endpoints.</td>
+                <td>Backoff retry and alert user.</td>
+              </tr>
+              <tr>
+                <td>500</td>
+                <td>Unhandled server failure.</td>
+                <td>Show retry option and log context for support.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2>Common UI Surface Errors</h2>
+        <ul>
+          <li><strong>Unauthorized deep-link access:</strong> workspace route redirects to login with <code>returnTo</code>.</li>
+          <li><strong>PIN required:</strong> workspace views lock until pin verification succeeds.</li>
+          <li><strong>Network instability:</strong> dashboard/workspace network banners appear on failed fetch or server errors.</li>
+        </ul>
+
+        <div class="callout danger">
+          <p>
+            Never expose raw secrets in logs or screenshots. Use docs capture masking to replace token/license/webhook values.
+          </p>
+        </div>
+      </article>
+    </main>
+  </div>
+
+  <script src="/docs/assets/docs.js"></script>
+</body>
+</html>

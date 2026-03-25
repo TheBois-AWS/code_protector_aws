@@ -25,8 +25,7 @@ Includes parity-focused routes for:
 - Access rules: `/api/workspaces/:id/access-lists*`, `/api/access-lists/:id`
 - Team/invitations: `/api/workspaces/:id/team*`, `/api/invitations/:token*`
 - Loader: `/files/:id.py`, `/files/:id.js`, `/api/v5/execute`, `/api/v5/handshake`
-
-WebSocket routes are intentionally removed. Frontend uses manual refresh.
+- WebSocket: `/api/ws/config` (HTTP discovery) + API Gateway WebSocket channels
 
 ## Frontend Hosting Behavior
 
@@ -37,6 +36,8 @@ CloudFront rewrite behavior in `infra/template.yaml`:
 - `/register` -> `/register/index.html`
 - `/dashboard` -> `/dashboard/index.html`
 - `/workspace/*` -> `/workspace/index.html`
+- `/docs` -> `/docs/index.html`
+- `/docs/*` -> `/docs/*/index.html` (for deep links without extension)
 
 ## Environment Variables (Lambda)
 
@@ -66,6 +67,27 @@ npm run dev
 
 Local server starts at `http://localhost:3001` and routes through the same Lambda handler (`src/index.js`).
 
+## Documentation Site (`/docs`)
+
+Docs are static assets under `frontend/docs/` and are published with the normal frontend deploy.
+
+- Overview: `/docs`
+- UI Guide (with screenshots): `/docs/web-ui`
+- API (ReDoc): `/docs/api`
+- WebSocket appendix: `/docs/api/websocket`
+- Raw OpenAPI spec: `/docs/openapi.yaml`
+
+### Docs Commands
+
+```bash
+npm run docs:mock-api          # deterministic local API fixtures for docs capture
+npm run docs:host              # serves frontend with /api and /files proxy
+npm run docs:capture           # generate screenshots + docs manifest
+npm run docs:validate-openapi  # validate OpenAPI syntax/refs
+npm run docs:check-parity      # compare src/router.js vs OpenAPI paths/methods
+npm run docs:check             # run both checks
+```
+
 ## AWS Deploy
 
 1. Build and deploy stack:
@@ -88,6 +110,7 @@ aws s3 sync frontend/ s3://<FrontendBucketName> --delete
 Workflow file:
 
 - `.github/workflows/deploy-aws.yml`
+- `.github/workflows/docs-check.yml` (OpenAPI + parity checks, optional manual screenshot capture artifact)
 
 What it does on `push` to `main` (or manual `workflow_dispatch`):
 
@@ -175,7 +198,7 @@ git push -u origin main
 
 - DynamoDB schema is multi-table (users/workspaces/projects/files/licenses/access/logs/team/pin/rate-limit/app-config).
 - GSIs are defined for loader key, owner workspace listing, project secret key, license key, invitation token, and workspace-scoped queries.
-- No SQLite and no WebSocket dependency in this rewrite.
+- No SQLite dependency in this rewrite. Realtime WebSocket is supported via API Gateway + Lambda integration.
 - CloudWatch log retention is managed by template parameter `LambdaLogRetentionDays` via `ApiFunctionLogGroup`.
 - To avoid update failures on existing stacks, `ApiFunctionLogGroup` creation is controlled by `ManageApiLogGroup` (default `false`).
 - CloudWatch monitoring can be toggled by template parameter `EnableCloudWatchAlarms` (dashboard + alarms for errors/throttles/p95 duration).

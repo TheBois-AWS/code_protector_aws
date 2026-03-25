@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Code Protector AWS Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/docs/assets/docs.css">
+</head>
+<body>
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <div class="docs-brand">
+        <a href="/docs">
+          <h1>Code Protector AWS</h1>
+          <p>Public Documentation</p>
+        </a>
+      </div>
+      <div class="docs-search-wrap">
+        <input id="docsSearch" class="docs-search" type="search" placeholder="Search docs..." aria-label="Search docs">
+        <div id="searchResults" class="search-results"></div>
+      </div>
+      <nav id="docsNav" class="docs-nav" aria-label="Documentation Navigation"></nav>
+    </aside>
+
+    <main class="docs-main">
+      <article class="docs-content">
+        <h1>Documentation Portal</h1>
+        <p>
+          This portal covers the full <code>code_protector_aws</code> experience: architecture, UI workflows,
+          HTTP API, WebSocket realtime channels, and operational behavior.
+        </p>
+
+        <div class="callout ok">
+          <p>
+            All docs are served from the same CloudFront domain under <code>/docs</code>. Deployment piggybacks on the
+            existing S3 sync + CloudFront invalidation workflow.
+          </p>
+        </div>
+
+        <h2>What You Get</h2>
+        <div class="card-grid">
+          <section class="card">
+            <h3>Web UI Guide</h3>
+            <p>Screen-by-screen reference with deterministic screenshots from an automated Playwright pipeline.</p>
+          </section>
+          <section class="card">
+            <h3>API Reference</h3>
+            <p>OpenAPI 3.x backed docs rendered with ReDoc, including request/response examples and auth details.</p>
+          </section>
+          <section class="card">
+            <h3>WebSocket Appendix</h3>
+            <p>Connection patterns, message shapes, channel semantics, and reconnect behavior.</p>
+          </section>
+          <section class="card">
+            <h3>Contract Checks</h3>
+            <p>Route parity scripts ensure OpenAPI stays aligned with runtime routes in <code>src/router.js</code>.</p>
+          </section>
+        </div>
+
+        <h2>Quick Links</h2>
+        <ul>
+          <li><a href="/docs/getting-started">Getting Started</a></li>
+          <li><a href="/docs/web-ui">Web UI Guide + Screenshots</a></li>
+          <li><a href="/docs/api">API Reference (ReDoc)</a></li>
+          <li><a href="/docs/api/websocket">WebSocket Appendix</a></li>
+          <li><a href="/docs/errors">Error Catalog</a></li>
+        </ul>
+
+        <h2>Artifacts</h2>
+        <ul>
+          <li>OpenAPI spec: <a href="/docs/openapi.yaml">/docs/openapi.yaml</a></li>
+          <li>Screenshot manifest: <a href="/docs/assets/screens/manifest.json">/docs/assets/screens/manifest.json</a></li>
+        </ul>
+
+        <p class="footer-note">Generated doc package version: <strong data-docs-generated-at></strong></p>
+      </article>
+    </main>
+  </div>
+
+  <script src="/docs/assets/docs.js"></script>
+</body>
+</html>

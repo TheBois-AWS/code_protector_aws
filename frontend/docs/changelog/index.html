@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Changelog | Code Protector AWS Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/docs/assets/docs.css">
+</head>
+<body>
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <div class="docs-brand">
+        <a href="/docs">
+          <h1>Code Protector AWS</h1>
+          <p>Public Documentation</p>
+        </a>
+      </div>
+      <div class="docs-search-wrap">
+        <input id="docsSearch" class="docs-search" type="search" placeholder="Search docs..." aria-label="Search docs">
+        <div id="searchResults" class="search-results"></div>
+      </div>
+      <nav id="docsNav" class="docs-nav" aria-label="Documentation Navigation"></nav>
+    </aside>
+
+    <main class="docs-main">
+      <article class="docs-content">
+        <h1>Changelog</h1>
+        <p>
+          Human-friendly release notes for docs and API contract changes.
+        </p>
+
+        <h2>2026-03-25</h2>
+        <ul>
+          <li>Introduced public docs site under <code>/docs</code>.</li>
+          <li>Added OpenAPI-based API reference with ReDoc embed.</li>
+          <li>Added WebSocket appendix with channel and event details.</li>
+          <li>Added automated Playwright screenshot capture and manifest.</li>
+          <li>Added route parity checks between runtime router and OpenAPI contract.</li>
+        </ul>
+
+        <h2>Maintainer Notes</h2>
+        <ul>
+          <li>Update this page when endpoint behavior changes.</li>
+          <li>Regenerate screenshots after major UX updates.</li>
+          <li>Keep examples synchronized with <code>frontend/docs/openapi.yaml</code>.</li>
+        </ul>
+      </article>
+    </main>
+  </div>
+
+  <script src="/docs/assets/docs.js"></script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Architecture | Code Protector AWS Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/docs/assets/docs.css">
+</head>
+<body>
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <div class="docs-brand">
+        <a href="/docs">
+          <h1>Code Protector AWS</h1>
+          <p>Public Documentation</p>
+        </a>
+      </div>
+      <div class="docs-search-wrap">
+        <input id="docsSearch" class="docs-search" type="search" placeholder="Search docs..." aria-label="Search docs">
+        <div id="searchResults" class="search-results"></div>
+      </div>
+      <nav id="docsNav" class="docs-nav" aria-label="Documentation Navigation"></nav>
+    </aside>
+
+    <main class="docs-main">
+      <article class="docs-content">
+        <h1>Architecture</h1>
+        <p>
+          The application is an AWS-first static + serverless design.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th>AWS Service</th>
+                <th>Responsibility</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Edge</td>
+                <td>CloudFront</td>
+                <td>Serve static UI, route <code>/api/*</code> and <code>/files/*</code> to Lambda Function URL, apply route rewrites.</td>
+              </tr>
+              <tr>
+                <td>Frontend</td>
+                <td>S3 (private + OAC)</td>
+                <td>Stores static pages for app and docs (<code>/docs</code>).</td>
+              </tr>
+              <tr>
+                <td>Backend</td>
+                <td>Lambda</td>
+                <td>Single modular monolith for auth, workspace, project, files, licenses, access, team, loader, websocket.</td>
+              </tr>
+              <tr>
+                <td>Data</td>
+                <td>DynamoDB</td>
+                <td>Multi-table persistence with GSIs for fast lookups.</td>
+              </tr>
+              <tr>
+                <td>Object Content</td>
+                <td>S3</td>
+                <td>Project/file content objects and bundles.</td>
+              </tr>
+              <tr>
+                <td>Observability</td>
+                <td>CloudWatch</td>
+                <td>Lambda logs, metrics, alarms, dashboard widgets.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2>Request Paths</h2>
+        <ul>
+          <li><code>/</code>, <code>/login</code>, <code>/register</code>, <code>/dashboard</code>, <code>/workspace/*</code>, <code>/docs/*</code> -> static assets on S3.</li>
+          <li><code>/api/*</code> -> Lambda Function URL origin.</li>
+          <li><code>/files/*</code> -> Lambda Function URL origin.</li>
+        </ul>
+
+        <h2>Token and Security Model</h2>
+        <ul>
+          <li>Auth token format: <code>v2.&lt;payload&gt;.&lt;sig&gt;</code> (HMAC signed).</li>
+          <li>Password hashing: PBKDF2-SHA256 with iteration metadata.</li>
+          <li>Workspace PIN gate via <code>X-Pin-Token</code> for protected operations.</li>
+          <li>Route-level role checks for owner/admin/editor/viewer.</li>
+        </ul>
+
+        <h2>Realtime</h2>
+        <p>
+          WebSocket delivery is supported via API Gateway WebSocket API and Lambda integration. Dashboard/workspace
+          clients consume route-based channels and apply reconnect logic.
+        </p>
+
+        <div class="callout">
+          <p>
+            See <a href="/docs/api/websocket">WebSocket Appendix</a> for channel query formats and event examples.
+          </p>
+        </div>
+      </article>
+    </main>
+  </div>
+
+  <script src="/docs/assets/docs.js"></script>
+</body>
+</html>

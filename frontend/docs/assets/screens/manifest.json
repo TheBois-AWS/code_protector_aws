@@ -1,0 +1,142 @@
+{
+  "generatedAt": "2026-03-25T11:35:53.133Z",
+  "source": "/scripts/docs/capture-manifest.json",
+  "screens": [
+    {
+      "name": "landing",
+      "group": "auth",
+      "title": "Landing Page",
+      "description": "Public home page before authentication.",
+      "file": "/docs/assets/screens/01-landing.png",
+      "path": "/"
+    },
+    {
+      "name": "login",
+      "group": "auth",
+      "title": "Login",
+      "description": "Sign-in form with token-based auth.",
+      "file": "/docs/assets/screens/02-login.png",
+      "path": "/login"
+    },
+    {
+      "name": "register",
+      "group": "auth",
+      "title": "Register",
+      "description": "Account creation page with password strength UX.",
+      "file": "/docs/assets/screens/03-register.png",
+      "path": "/register"
+    },
+    {
+      "name": "dashboard-overview",
+      "group": "dashboard",
+      "title": "Dashboard Overview",
+      "description": "Primary metrics and recent workspace highlights.",
+      "file": "/docs/assets/screens/04-dashboard-overview.png",
+      "path": "/dashboard"
+    },
+    {
+      "name": "dashboard-list",
+      "group": "dashboard",
+      "title": "Dashboard Workspace List",
+      "description": "Workspace catalog panel with filters and sorting.",
+      "file": "/docs/assets/screens/05-dashboard-list.png",
+      "path": "/dashboard"
+    },
+    {
+      "name": "workspace-overview",
+      "group": "workspace",
+      "title": "Workspace Overview",
+      "description": "Charts and usage rollups for the selected workspace.",
+      "file": "/docs/assets/screens/06-workspace-overview.png",
+      "path": "/workspace/ws-alpha/overview"
+    },
+    {
+      "name": "workspace-projects",
+      "group": "workspace",
+      "title": "Workspace Projects",
+      "description": "Project manager with search/filter controls.",
+      "file": "/docs/assets/screens/07-workspace-projects.png",
+      "path": "/workspace/ws-alpha/projects"
+    },
+    {
+      "name": "workspace-editor",
+      "group": "workspace",
+      "title": "Workspace Editor",
+      "description": "Code editor with file tree and save controls.",
+      "file": "/docs/assets/screens/08-workspace-editor.png",
+      "path": "/workspace/ws-alpha/editor/proj-main"
+    },
+    {
+      "name": "workspace-licenses",
+      "group": "workspace",
+      "title": "Workspace Licenses",
+      "description": "License management grid with key status and actions.",
+      "file": "/docs/assets/screens/09-workspace-licenses.png",
+      "path": "/workspace/ws-alpha/licenses"
+    },
+    {
+      "name": "workspace-access",
+      "group": "workspace",
+      "title": "Workspace Access Control",
+      "description": "Whitelist/blacklist rule management panel.",
+      "file": "/docs/assets/screens/10-workspace-access.png",
+      "path": "/workspace/ws-alpha/access"
+    },
+    {
+      "name": "workspace-logs",
+      "group": "workspace",
+      "title": "Workspace Logs",
+      "description": "Execution and security events stream.",
+      "file": "/docs/assets/screens/11-workspace-logs.png",
+      "path": "/workspace/ws-alpha/logs"
+    },
+    {
+      "name": "workspace-team",
+      "group": "workspace",
+      "title": "Workspace Team",
+      "description": "Members, roles, and invitation status.",
+      "file": "/docs/assets/screens/12-workspace-team.png",
+      "path": "/workspace/ws-alpha/team"
+    },
+    {
+      "name": "workspace-settings-pin-modal",
+      "group": "workspace",
+      "title": "Workspace PIN Gate",
+      "description": "PIN verification modal for protected workspace access.",
+      "file": "/docs/assets/screens/13-workspace-settings-pin-modal.png",
+      "path": "/workspace/ws-pin/settings"
+    },
+    {
+      "name": "unauthorized-deep-link-redirect",
+      "group": "errors",
+      "title": "Unauthorized Deep-Link Redirect",
+      "description": "Unauthenticated workspace deep-link redirected to login with returnTo.",
+      "file": "/docs/assets/screens/14-unauthorized-deep-link-redirect.png",
+      "path": "/workspace/ws-alpha/editor/proj-main"
+    },
+    {
+      "name": "api-docs-main",
+      "group": "api-docs",
+      "title": "API Docs Main",
+      "description": "ReDoc entry page backed by OpenAPI spec.",
+      "file": "/docs/assets/screens/15-api-docs-main.png",
+      "path": "/docs/api"
+    },
+    {
+      "name": "websocket-docs-appendix",
+      "group": "api-docs",
+      "title": "WebSocket Appendix",
+      "description": "Realtime channel patterns and event examples.",
+      "file": "/docs/assets/screens/16-websocket-docs-appendix.png",
+      "path": "/docs/api/websocket"
+    },
+    {
+      "name": "error-network-banner",
+      "group": "errors",
+      "title": "Network Banner State",
+      "description": "Dashboard network degradation banner for fetch failures.",
+      "file": "/docs/assets/screens/17-error-network-banner.png",
+      "path": "/dashboard"
+    }
+  ]
+}

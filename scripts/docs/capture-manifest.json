@@ -1,0 +1,237 @@
+{
+  "viewport": {
+    "width": 1440,
+    "height": 1600,
+    "deviceScaleFactor": 1
+  },
+  "timezoneId": "UTC",
+  "locale": "en-US",
+  "fixedNow": "2026-03-25T08:00:00.000Z",
+  "outputDir": "frontend/docs/assets/screens",
+  "screens": [
+    {
+      "name": "landing",
+      "group": "auth",
+      "title": "Landing Page",
+      "description": "Public home page before authentication.",
+      "file": "01-landing.png",
+      "path": "/",
+      "state": "public",
+      "waitFor": ["body", "main"],
+      "mask": []
+    },
+    {
+      "name": "login",
+      "group": "auth",
+      "title": "Login",
+      "description": "Sign-in form with token-based auth.",
+      "file": "02-login.png",
+      "path": "/login",
+      "state": "auth",
+      "waitFor": ["#loginForm"],
+      "mask": ["#password"]
+    },
+    {
+      "name": "register",
+      "group": "auth",
+      "title": "Register",
+      "description": "Account creation page with password strength UX.",
+      "file": "03-register.png",
+      "path": "/register",
+      "state": "auth",
+      "waitFor": ["#registerForm"],
+      "mask": ["#password", "#confirmPassword"]
+    },
+    {
+      "name": "dashboard-overview",
+      "group": "dashboard",
+      "title": "Dashboard Overview",
+      "description": "Primary metrics and recent workspace highlights.",
+      "file": "04-dashboard-overview.png",
+      "path": "/dashboard",
+      "state": "dashboard-overview",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#overview.active", "#statsWorkspaces"],
+      "mask": ["#sidebarEmail", "#settingsEmail", "#deleteAccountPassword"]
+    },
+    {
+      "name": "dashboard-list",
+      "group": "dashboard",
+      "title": "Dashboard Workspace List",
+      "description": "Workspace catalog panel with filters and sorting.",
+      "file": "05-dashboard-list.png",
+      "path": "/dashboard",
+      "state": "dashboard-list",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#workspaceList"],
+      "actions": [
+        {
+          "type": "click",
+          "selector": "a[onclick*=\"showPanel('workspaces'\"]"
+        }
+      ],
+      "mask": ["#sidebarEmail", "#settingsEmail"]
+    },
+    {
+      "name": "workspace-overview",
+      "group": "workspace",
+      "title": "Workspace Overview",
+      "description": "Charts and usage rollups for the selected workspace.",
+      "file": "06-workspace-overview.png",
+      "path": "/workspace/ws-alpha/overview",
+      "state": "workspace-overview",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#view-overview.active", "#stat-projects-count", "#recentExecutions"],
+      "mask": ["#workspaceIdDisplay", "#sidebarEmail"]
+    },
+    {
+      "name": "workspace-projects",
+      "group": "workspace",
+      "title": "Workspace Projects",
+      "description": "Project manager with search/filter controls.",
+      "file": "07-workspace-projects.png",
+      "path": "/workspace/ws-alpha/projects",
+      "state": "workspace-projects",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#view-projects.active", "#projectsGrid"],
+      "mask": ["#workspaceIdDisplay", "#sidebarEmail", "#loaderCode"]
+    },
+    {
+      "name": "workspace-editor",
+      "group": "workspace",
+      "title": "Workspace Editor",
+      "description": "Code editor with file tree and save controls.",
+      "file": "08-workspace-editor.png",
+      "path": "/workspace/ws-alpha/editor/proj-main",
+      "state": "workspace-editor",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#view-editor.active", "#file-tree-container", "#primarySaveButton"],
+      "mask": ["#workspaceIdDisplay", "#sidebarEmail", "#loaderCode", "#projectSecretKey"]
+    },
+    {
+      "name": "workspace-licenses",
+      "group": "workspace",
+      "title": "Workspace Licenses",
+      "description": "License management grid with key status and actions.",
+      "file": "09-workspace-licenses.png",
+      "path": "/workspace/ws-alpha/licenses",
+      "state": "workspace-licenses",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#view-licenses.active", "#licenseList"],
+      "mask": ["#workspaceIdDisplay", "#sidebarEmail", "#licenseList code"]
+    },
+    {
+      "name": "workspace-access",
+      "group": "workspace",
+      "title": "Workspace Access Control",
+      "description": "Whitelist/blacklist rule management panel.",
+      "file": "10-workspace-access.png",
+      "path": "/workspace/ws-alpha/access",
+      "state": "workspace-access",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#view-access.active", "#accessList"],
+      "mask": ["#workspaceIdDisplay", "#sidebarEmail", "#accessList code"]
+    },
+    {
+      "name": "workspace-logs",
+      "group": "workspace",
+      "title": "Workspace Logs",
+      "description": "Execution and security events stream.",
+      "file": "11-workspace-logs.png",
+      "path": "/workspace/ws-alpha/logs",
+      "state": "workspace-logs",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#view-logs.active", "#logsList"],
+      "mask": ["#workspaceIdDisplay", "#sidebarEmail", "#logsList td:nth-child(3)"]
+    },
+    {
+      "name": "workspace-team",
+      "group": "workspace",
+      "title": "Workspace Team",
+      "description": "Members, roles, and invitation status.",
+      "file": "12-workspace-team.png",
+      "path": "/workspace/ws-alpha/team",
+      "state": "workspace-team",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#view-team.active", "#teamMembersList"],
+      "mask": ["#workspaceIdDisplay", "#sidebarEmail", "#teamMembersList p.text-xs.text-gray-500"]
+    },
+    {
+      "name": "workspace-settings-pin-modal",
+      "group": "workspace",
+      "title": "Workspace PIN Gate",
+      "description": "PIN verification modal for protected workspace access.",
+      "file": "13-workspace-settings-pin-modal.png",
+      "path": "/workspace/ws-pin/settings",
+      "state": "workspace-settings-pin-modal",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#pinVerifyModal", "#pinVerifyModal[style*=\"display: flex\"]"],
+      "mask": ["#workspaceIdDisplay", "#sidebarEmail", "#pinVerifyContainer input"]
+    },
+    {
+      "name": "unauthorized-deep-link-redirect",
+      "group": "errors",
+      "title": "Unauthorized Deep-Link Redirect",
+      "description": "Unauthenticated workspace deep-link redirected to login with returnTo.",
+      "file": "14-unauthorized-deep-link-redirect.png",
+      "path": "/workspace/ws-alpha/editor/proj-main",
+      "state": "unauthorized-redirect",
+      "waitFor": ["#loginForm"],
+      "mask": ["#password"]
+    },
+    {
+      "name": "api-docs-main",
+      "group": "api-docs",
+      "title": "API Docs Main",
+      "description": "ReDoc entry page backed by OpenAPI spec.",
+      "file": "15-api-docs-main.png",
+      "path": "/docs/api",
+      "state": "docs-api",
+      "waitFor": [".docs-content", "h1"]
+    },
+    {
+      "name": "websocket-docs-appendix",
+      "group": "api-docs",
+      "title": "WebSocket Appendix",
+      "description": "Realtime channel patterns and event examples.",
+      "file": "16-websocket-docs-appendix.png",
+      "path": "/docs/api/websocket",
+      "state": "docs-websocket",
+      "waitFor": [".docs-content", "h1"]
+    },
+    {
+      "name": "error-network-banner",
+      "group": "errors",
+      "title": "Network Banner State",
+      "description": "Dashboard network degradation banner for fetch failures.",
+      "file": "17-error-network-banner.png",
+      "path": "/dashboard",
+      "state": "network-banner",
+      "storage": {
+        "token": "docs-demo-token"
+      },
+      "waitFor": ["#networkStatusBanner.show"],
+      "mask": ["#sidebarEmail", "#settingsEmail"]
+    }
+  ]
+}

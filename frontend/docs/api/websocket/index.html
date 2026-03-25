@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WebSocket Appendix | Code Protector AWS Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/docs/assets/docs.css">
+</head>
+<body>
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <div class="docs-brand">
+        <a href="/docs">
+          <h1>Code Protector AWS</h1>
+          <p>Public Documentation</p>
+        </a>
+      </div>
+      <div class="docs-search-wrap">
+        <input id="docsSearch" class="docs-search" type="search" placeholder="Search docs..." aria-label="Search docs">
+        <div id="searchResults" class="search-results"></div>
+      </div>
+      <nav id="docsNav" class="docs-nav" aria-label="Documentation Navigation"></nav>
+    </aside>
+
+    <main class="docs-main">
+      <article class="docs-content">
+        <h1>WebSocket Appendix</h1>
+        <p>
+          Realtime channels are backed by API Gateway WebSocket and Lambda. Clients query <code>/api/ws/config</code>
+          to discover endpoint and then connect with route/channel parameters.
+        </p>
+
+        <h2>Connection Pattern</h2>
+        <pre><code># 1) Discover endpoint
+GET /api/ws/config
+
+# 2) Connect with query
+wss://&lt;endpoint&gt;?path=/api/ws/user/&lt;userId&gt;&amp;token=v2....
+# or
+wss://&lt;endpoint&gt;?channel=workspace&amp;workspaceId=&lt;workspaceId&gt;&amp;token=v2....
+</code></pre>
+
+        <h2>Supported Targets</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Target</th>
+                <th>Query Inputs</th>
+                <th>Access Rule</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>User channel</td>
+                <td><code>path=/api/ws/user/:userId</code> or <code>channel=user&amp;userId=...</code></td>
+                <td>Token user must match <code>userId</code></td>
+              </tr>
+              <tr>
+                <td>Workspace channel</td>
+                <td><code>path=/api/ws/logs/:workspaceId</code> or <code>channel=workspace&amp;workspaceId=...</code></td>
+                <td>User must have workspace access with <code>view_logs</code> permission</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2>Event Shapes</h2>
+        <pre><code>{
+  "type": "WORKSPACE_UPDATE",
+  "data": {
+    "workspaceId": "...",
+    "source": "project"
+  }
+}
+
+{
+  "type": "PROFILE_UPDATE",
+  "data": {
+    "userId": "..."
+  }
+}
+</code></pre>
+
+        <h2>Reconnect Guidance</h2>
+        <ul>
+          <li>Use exponential backoff with upper bound (dashboard/workspace clients already do this).</li>
+          <li>Treat websocket as optimization. Always support data refresh via HTTP fallback.</li>
+          <li>On auth failure, clear token and redirect to login.</li>
+        </ul>
+
+        <h2>Appendix Screenshots</h2>
+        <div data-screenshot-gallery="api-docs"></div>
+      </article>
+    </main>
+  </div>
+
+  <script src="/docs/assets/docs.js"></script>
+</body>
+</html>
