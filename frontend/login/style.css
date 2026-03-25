@@ -250,6 +250,44 @@ body {
     position: relative;
 }
 
+.input-wrap input {
+    padding-right: 2.8rem;
+}
+
+.password-toggle {
+    position: absolute;
+    top: 50%;
+    right: 0.45rem;
+    transform: translateY(-50%);
+    width: 34px;
+    height: 34px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    color: #8fb2d8;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.password-toggle:hover {
+    color: #d2e6ff;
+    background: rgba(143, 178, 216, 0.12);
+    border-color: rgba(143, 178, 216, 0.24);
+}
+
+.password-toggle:focus-visible {
+    outline: 2px solid rgba(100, 167, 255, 0.86);
+    outline-offset: 2px;
+}
+
+.password-toggle i {
+    width: 15px;
+    height: 15px;
+}
+
 .auth-form input {
     width: 100%;
     border: 1px solid var(--border);

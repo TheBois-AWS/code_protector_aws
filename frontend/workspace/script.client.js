@@ -348,12 +348,83 @@ let workspaceWsShouldReconnect = true;
 let workspaceWsEndpoint = null;
 let workspaceWsReconnectDelayMs = 2000;
 const realtimeRefreshTimers = new Map();
+let workspaceFetchWrapped = false;
 const PANEL_STATE_KEYS = {
     settingsCollapsed: `workspace:${workspaceIdentifier}:settingsPanelCollapsed`,
     detailsCollapsed: `workspace:${workspaceIdentifier}:detailsPanelCollapsed`,
     settingsHeight: `workspace:${workspaceIdentifier}:settingsPanelHeight`,
     detailsWidth: `workspace:${workspaceIdentifier}:detailsPanelWidth`
 };
+
+function setWorkspaceNetworkBanner(visible, message) {
+    const banner = document.getElementById('networkStatusBanner');
+    const text = document.getElementById('networkStatusText');
+    if (!banner || !text) return;
+    text.textContent = message || 'Connection issue detected. Some actions may fail.';
+    banner.classList.toggle('show', Boolean(visible));
+}
+
+function retryWorkspaceConnection() {
+    setWorkspaceNetworkBanner(false);
+    loadWorkspaceData().catch(() => {
+        setWorkspaceNetworkBanner(true, 'Still unable to connect. Please try again in a moment.');
+    });
+}
+
+function openMobileSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const backdrop = document.getElementById('mobileSidebarBackdrop');
+    const toggle = document.getElementById('mobileSidebarToggle');
+    if (!sidebar || window.innerWidth > 768) return;
+    sidebar.classList.remove('-translate-x-full');
+    sidebar.classList.add('translate-x-0');
+    backdrop?.classList.add('active');
+    if (toggle) toggle.setAttribute('aria-expanded', 'true');
+}
+
+function closeMobileSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const backdrop = document.getElementById('mobileSidebarBackdrop');
+    const toggle = document.getElementById('mobileSidebarToggle');
+    if (!sidebar || window.innerWidth > 768) return;
+    sidebar.classList.add('-translate-x-full');
+    sidebar.classList.remove('translate-x-0');
+    backdrop?.classList.remove('active');
+    if (toggle) toggle.setAttribute('aria-expanded', 'false');
+}
+
+function toggleMobileSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar || window.innerWidth > 768) return;
+    const isOpen = sidebar.classList.contains('translate-x-0');
+    if (isOpen) {
+        closeMobileSidebar();
+    } else {
+        openMobileSidebar();
+    }
+}
+
+function installWorkspaceFetchGuard() {
+    if (workspaceFetchWrapped) return;
+    workspaceFetchWrapped = true;
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+        try {
+            const response = await nativeFetch(...args);
+            if (response.status >= 500) {
+                setWorkspaceNetworkBanner(true, 'Server is busy right now. Retrying may help.');
+            } else {
+                setWorkspaceNetworkBanner(false);
+            }
+            return response;
+        } catch (error) {
+            setWorkspaceNetworkBanner(true, 'Network error. Check your connection and retry.');
+            throw error;
+        }
+    };
+}
+
+installWorkspaceFetchGuard();
 
 // Permission system - matches backend permissions
 const PERMISSIONS = {
@@ -782,6 +853,8 @@ function switchView(viewName, updateHistory = true) {
         activeNav.classList.add('active', 'text-gray-200');
         activeNav.classList.remove('text-gray-400');
     }
+
+    closeMobileSidebar();
 
     // Update URL without reload
     if (updateHistory) {
@@ -5420,17 +5493,35 @@ function initPrivacyMode() {
 
 // Initialize privacy mode on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
+    installWorkspaceFetchGuard();
     initPrivacyMode();
+
+    const retryButton = document.getElementById('networkRetryButton');
+    if (retryButton) {
+        retryButton.addEventListener('click', retryWorkspaceConnection);
+    }
+
+    window.addEventListener('offline', () => {
+        setWorkspaceNetworkBanner(true, 'You are offline. Reconnect to continue syncing.');
+    });
+    window.addEventListener('online', () => {
+        setWorkspaceNetworkBanner(false);
+    });
 
     // Mobile sidebar toggle
     const sidebarToggle = document.getElementById('mobileSidebarToggle');
-    const sidebar = document.querySelector('.sidebar');
-    if (sidebarToggle && sidebar) {
-        sidebarToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('-translate-x-full');
-            sidebar.classList.toggle('translate-x-0');
-        });
+    const sidebarBackdrop = document.getElementById('mobileSidebarBackdrop');
+    if (sidebarToggle) {
+        sidebarToggle.setAttribute('aria-expanded', 'false');
+        sidebarToggle.addEventListener('click', toggleMobileSidebar);
     }
+    sidebarBackdrop?.addEventListener('click', closeMobileSidebar);
+    window.addEventListener('resize', closeMobileSidebar);
+
+    // Escape closes sidebar on mobile
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeMobileSidebar();
+    });
 
     // Close modals on backdrop click
     document.querySelectorAll('[id$="Modal"]').forEach(modal => {

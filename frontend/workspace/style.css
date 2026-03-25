@@ -3125,3 +3125,79 @@ textarea:focus-visible {
         transition-duration: 0.01ms !important;
     }
 }
+
+/* UX upgrades: network status + mobile sidebar backdrop */
+.mobile-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(3, 7, 13, 0.62);
+    backdrop-filter: blur(2px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+    z-index: 35;
+}
+
+.mobile-sidebar-backdrop.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.network-status-banner {
+    position: fixed;
+    top: 1rem;
+    left: 50%;
+    transform: translate(-50%, -140%);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 12px;
+    border: 1px solid rgba(246, 153, 84, 0.45);
+    background: rgba(49, 22, 8, 0.92);
+    color: #ffd8bd;
+    font-size: 0.82rem;
+    font-weight: 500;
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.34);
+    z-index: 80;
+    transition: transform 220ms ease;
+}
+
+.network-status-banner.show {
+    transform: translate(-50%, 0);
+}
+
+.network-status-banner button {
+    border: 1px solid rgba(250, 180, 125, 0.45);
+    background: rgba(250, 180, 125, 0.12);
+    color: #ffe2cc;
+    border-radius: 9px;
+    padding: 0.28rem 0.55rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 140ms ease, border-color 140ms ease;
+}
+
+.network-status-banner button:hover {
+    background: rgba(250, 180, 125, 0.2);
+    border-color: rgba(250, 180, 125, 0.62);
+}
+
+[data-theme="light"] .network-status-banner {
+    background: rgba(255, 242, 230, 0.98);
+    border-color: rgba(191, 97, 27, 0.42);
+    color: #8a4515;
+}
+
+[data-theme="light"] .network-status-banner button {
+    color: #8a4515;
+    border-color: rgba(191, 97, 27, 0.35);
+    background: rgba(191, 97, 27, 0.08);
+}
+
+@media (min-width: 769px) {
+    .mobile-sidebar-backdrop {
+        display: none;
+    }
+}

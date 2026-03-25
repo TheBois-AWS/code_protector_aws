@@ -68,6 +68,7 @@ let dashboardWsUserId = null;
 let dashboardWsShouldReconnect = true;
 let dashboardWsReconnectDelayMs = 2000;
 let dashboardRealtimeRefreshTimer = null;
+let dashboardFetchWrapped = false;
 
 function scheduleDashboardRealtimeRefresh(delay = 300) {
   if (dashboardRealtimeRefreshTimer) clearTimeout(dashboardRealtimeRefreshTimer);
@@ -261,14 +262,75 @@ function getNavElForPanel(panelId) {
          document.querySelector(`.nav-item[onclick*='"${panelId}"']`);
 }
 
+function setDashboardNetworkBanner(visible, message) {
+  const banner = document.getElementById('networkStatusBanner');
+  const text = document.getElementById('networkStatusText');
+  if (!banner || !text) return;
+  text.textContent = message || 'Connection issue detected. Some actions may fail.';
+  banner.classList.toggle('show', Boolean(visible));
+}
+
+function retryDashboardConnection() {
+  setDashboardNetworkBanner(false);
+  refreshDashboardData().catch(() => {
+    setDashboardNetworkBanner(true, 'Still unable to connect. Please try again in a moment.');
+  });
+}
+
+function openMobileSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  const backdrop = document.getElementById('mobileSidebarBackdrop');
+  const toggle = document.getElementById('mobileSidebarToggle');
+  if (!sidebar || window.innerWidth > 768) return;
+  sidebar.classList.remove('-translate-x-full');
+  sidebar.classList.add('translate-x-0');
+  backdrop?.classList.add('active');
+  if (toggle) toggle.setAttribute('aria-expanded', 'true');
+}
+
 function closeMobileSidebar() {
   const sidebar = document.querySelector('.sidebar');
-  if (!sidebar) return;
-  if (window.innerWidth <= 768) {
-    sidebar.classList.add('-translate-x-full');
-    sidebar.classList.remove('translate-x-0');
+  const backdrop = document.getElementById('mobileSidebarBackdrop');
+  const toggle = document.getElementById('mobileSidebarToggle');
+  if (!sidebar || window.innerWidth > 768) return;
+  sidebar.classList.add('-translate-x-full');
+  sidebar.classList.remove('translate-x-0');
+  backdrop?.classList.remove('active');
+  if (toggle) toggle.setAttribute('aria-expanded', 'false');
+}
+
+function toggleMobileSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar || window.innerWidth > 768) return;
+  const isOpen = sidebar.classList.contains('translate-x-0');
+  if (isOpen) {
+    closeMobileSidebar();
+  } else {
+    openMobileSidebar();
   }
 }
+
+function installDashboardFetchGuard() {
+  if (dashboardFetchWrapped) return;
+  dashboardFetchWrapped = true;
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    try {
+      const response = await nativeFetch(...args);
+      if (response.status >= 500) {
+        setDashboardNetworkBanner(true, 'Server is busy right now. Retrying may help.');
+      } else {
+        setDashboardNetworkBanner(false);
+      }
+      return response;
+    } catch (error) {
+      setDashboardNetworkBanner(true, 'Network error. Check your connection and retry.');
+      throw error;
+    }
+  };
+}
+
+installDashboardFetchGuard();
 
 // Panel Navigation
 function showPanel(panelId, navEl) {
@@ -729,6 +791,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     document.getElementById('createWorkspaceModal').style.display = 'none';
     document.getElementById('deleteAccountModal').style.display = 'none';
+    closeMobileSidebar();
   }
   
   // Ctrl+K for quick search
@@ -741,18 +804,32 @@ document.addEventListener('keydown', (e) => {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+  installDashboardFetchGuard();
+
+  const retryButton = document.getElementById('networkRetryButton');
+  if (retryButton) {
+    retryButton.addEventListener('click', retryDashboardConnection);
+  }
+
+  window.addEventListener('offline', () => {
+    setDashboardNetworkBanner(true, 'You are offline. Reconnect to continue syncing.');
+  });
+  window.addEventListener('online', () => {
+    setDashboardNetworkBanner(false);
+  });
+
   loadUserProfile();
   loadOverviewData();
 
   // Mobile sidebar toggle
   const sidebarToggle = document.getElementById('mobileSidebarToggle');
-  const sidebar = document.querySelector('.sidebar');
-  if (sidebarToggle && sidebar) {
-    sidebarToggle.addEventListener('click', () => {
-      sidebar.classList.toggle('-translate-x-full');
-      sidebar.classList.toggle('translate-x-0');
-    });
+  const sidebarBackdrop = document.getElementById('mobileSidebarBackdrop');
+  if (sidebarToggle) {
+    sidebarToggle.setAttribute('aria-expanded', 'false');
+    sidebarToggle.addEventListener('click', toggleMobileSidebar);
   }
+  sidebarBackdrop?.addEventListener('click', closeMobileSidebar);
+  window.addEventListener('resize', closeMobileSidebar);
 
   // Close modals on backdrop click
   document.querySelectorAll('[id$="Modal"]').forEach(modal => {

@@ -35,6 +35,14 @@
         <i data-lucide="menu" class="w-5 h-5 text-white"></i>
     </button>
 
+    <div id="mobileSidebarBackdrop" class="mobile-sidebar-backdrop" aria-hidden="true"></div>
+
+    <div id="networkStatusBanner" class="network-status-banner" role="status" aria-live="polite">
+        <i data-lucide="wifi-off" class="w-4 h-4"></i>
+        <span id="networkStatusText">Connection issue detected. Some actions may fail.</span>
+        <button id="networkRetryButton" type="button">Retry</button>
+    </div>
+
     <!-- Sidebar -->
     <aside class="sidebar w-full md:w-64 flex flex-row md:flex-col md:justify-between justify-start md:h-full fixed md:relative -translate-x-full md:translate-x-0 transition-transform duration-300 z-40">
         <div class="flex-1 flex flex-col min-h-0 overflow-hidden">

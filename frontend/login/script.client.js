@@ -68,6 +68,28 @@ function setButtonLoading(button, loading, loadingText) {
   }
 }
 
+function initPasswordToggles() {
+  document.querySelectorAll('[data-password-toggle]').forEach((toggleBtn) => {
+    const targetId = toggleBtn.getAttribute('data-password-toggle');
+    const input = document.getElementById(targetId);
+    if (!input) return;
+
+    toggleBtn.addEventListener('click', () => {
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      toggleBtn.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+      const icon = toggleBtn.querySelector('i');
+      if (icon) {
+        icon.setAttribute('data-lucide', showing ? 'eye' : 'eye-off');
+        if (window.lucide) window.lucide.createIcons();
+      }
+      input.focus();
+    });
+  });
+}
+
+initPasswordToggles();
+
 (async () => {
   const token = localStorage.getItem('token');
   if (!token) return;

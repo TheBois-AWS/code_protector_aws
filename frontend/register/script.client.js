@@ -68,6 +68,89 @@ function setButtonLoading(button, loading, loadingText) {
   }
 }
 
+function initPasswordToggles() {
+  document.querySelectorAll('[data-password-toggle]').forEach((toggleBtn) => {
+    const targetId = toggleBtn.getAttribute('data-password-toggle');
+    const input = document.getElementById(targetId);
+    if (!input) return;
+
+    toggleBtn.addEventListener('click', () => {
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      toggleBtn.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+      const icon = toggleBtn.querySelector('i');
+      if (icon) {
+        icon.setAttribute('data-lucide', showing ? 'eye' : 'eye-off');
+        if (window.lucide) window.lucide.createIcons();
+      }
+      input.focus();
+    });
+  });
+}
+
+function estimatePasswordScore(password) {
+  let score = 0;
+  if (!password) return score;
+  if (password.length >= 8) score += 1;
+  if (password.length >= 12) score += 1;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1;
+  if (/\d/.test(password)) score += 1;
+  if (/[^A-Za-z0-9]/.test(password)) score += 1;
+  return Math.min(score, 5);
+}
+
+function updatePasswordFeedback() {
+  const passwordInput = document.getElementById('password');
+  const confirmInput = document.getElementById('confirmPassword');
+  const bar = document.getElementById('passwordStrengthBar');
+  const label = document.getElementById('passwordStrengthLabel');
+  const confirmHint = document.getElementById('confirmPasswordHint');
+  if (!passwordInput || !confirmInput || !bar || !label || !confirmHint) return;
+
+  const score = estimatePasswordScore(passwordInput.value);
+  const widthPercent = Math.max(8, score * 20);
+  bar.style.width = `${widthPercent}%`;
+
+  if (!passwordInput.value) {
+    bar.style.width = '0%';
+    bar.style.backgroundColor = '#6f86a2';
+    label.textContent = 'Use at least 8 characters with mixed letter/number symbols.';
+  } else if (score <= 2) {
+    bar.style.backgroundColor = '#ff6f7b';
+    label.textContent = 'Weak password. Add uppercase, number, and symbol.';
+  } else if (score <= 4) {
+    bar.style.backgroundColor = '#f7b14b';
+    label.textContent = 'Good start. Add one more complexity factor for stronger security.';
+  } else {
+    bar.style.backgroundColor = '#2dc47a';
+    label.textContent = 'Strong password.';
+  }
+
+  if (!confirmInput.value) {
+    confirmHint.textContent = '';
+    return;
+  }
+
+  if (passwordInput.value === confirmInput.value) {
+    confirmHint.textContent = 'Passwords match.';
+    confirmHint.style.color = '#8de6b8';
+  } else {
+    confirmHint.textContent = 'Passwords do not match.';
+    confirmHint.style.color = '#ffb8bf';
+  }
+}
+
+function initPasswordUx() {
+  initPasswordToggles();
+  const passwordInput = document.getElementById('password');
+  const confirmInput = document.getElementById('confirmPassword');
+  if (passwordInput) passwordInput.addEventListener('input', updatePasswordFeedback);
+  if (confirmInput) confirmInput.addEventListener('input', updatePasswordFeedback);
+  updatePasswordFeedback();
+}
+
+initPasswordUx();
+
 (async () => {
   const token = localStorage.getItem('token');
   if (!token) return;
