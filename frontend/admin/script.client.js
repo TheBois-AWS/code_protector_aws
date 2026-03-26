@@ -502,6 +502,10 @@ async function loadOverview({ force = false } = {}) {
 function renderAwsServiceChart(summary = {}) {
   const canvas = document.getElementById('awsServiceChart');
   if (!canvas || typeof Chart === 'undefined') return;
+  canvas.removeAttribute('height');
+  canvas.removeAttribute('width');
+  canvas.style.height = '100%';
+  canvas.style.width = '100%';
   if (adminState.charts.awsServices) adminState.charts.awsServices.destroy();
   adminState.charts.awsServices = new Chart(canvas, {
     type: 'doughnut',
@@ -521,6 +525,7 @@ function renderAwsServiceChart(summary = {}) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: false,
       cutout: '62%',
       plugins: {
         legend: {
@@ -535,6 +540,10 @@ function renderAwsServiceChart(summary = {}) {
 function renderAwsBillingChart(billing = {}) {
   const canvas = document.getElementById('awsBillingChart');
   if (!canvas || typeof Chart === 'undefined') return;
+  canvas.removeAttribute('height');
+  canvas.removeAttribute('width');
+  canvas.style.height = '100%';
+  canvas.style.width = '100%';
   if (adminState.charts.awsBilling) adminState.charts.awsBilling.destroy();
   const series = Array.isArray(billing.daily_costs) ? billing.daily_costs : [];
   const labels = series.map((item) => item.date || '-');
@@ -556,9 +565,10 @@ function renderAwsBillingChart(billing = {}) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: false,
       scales: {
         x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148, 163, 184, 0.12)' } },
-        y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148, 163, 184, 0.12)' } }
+        y: { beginAtZero: true, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148, 163, 184, 0.12)' } }
       },
       plugins: {
         legend: {
@@ -591,12 +601,35 @@ function renderAwsServicesPanel() {
     const cardRows = Object.values(services).filter(Boolean);
     if (!cardRows.length) renderEmpty(cards, 'No service checks yet', 'Refresh the panel to run AWS service checks.');
     else {
+      const describeService = (service) => {
+        const key = String(service?.service || '').toLowerCase();
+        if (key === 'lambda') {
+          return `Req24h ${safeNumber(service.metrics_24h?.invocations || 0)} | Err ${safeNumber(service.metrics_24h?.errors || 0)} | Avg ${safeNumber(service.metrics_24h?.avg_duration_ms || 0).toFixed(2)}ms`;
+        }
+        if (key === 'cloudfront') {
+          return `Req24h ${safeNumber(service.metrics_24h?.requests || 0)} | Data ${formatBytes(service.metrics_24h?.bytes_downloaded || 0)} | 4xx ${safeNumber(service.metrics_24h?.avg_4xx_error_rate || 0).toFixed(4)}%`;
+        }
+        if (key === 'dynamodb') {
+          return `Tables ${safeNumber(service.summary?.total_tables || 0)} | Items ${safeNumber(service.summary?.total_items || 0)} | Storage ${formatBytes(service.summary?.total_size_bytes || 0)}`;
+        }
+        if (key === 's3') {
+          return `Buckets ${safeNumber(service.summary?.total_buckets || 0)} | Objects ${safeNumber(service.summary?.total_sampled_objects || 0)} | Sampled ${formatBytes(service.summary?.total_sampled_size_bytes || 0)}`;
+        }
+        if (key === 'cloudwatch') {
+          return `Alarms ${safeNumber(service.active_alarm_count || 0)} | Log storage ${formatBytes(service.log_group?.stored_bytes || 0)}`;
+        }
+        if (key === 'billing') {
+          return `MTD ${formatCurrency(service.month_to_date_total || 0, service.currency || 'USD')} | Forecast ${formatCurrency(service.forecast_month_total || 0, service.currency || 'USD')}`;
+        }
+        return '';
+      };
       cards.innerHTML = cardRows.map((service) => `
         <div class="summary-card">
           <div class="flex items-center justify-between gap-2">
             <div class="font-semibold text-white">${escapeHtml(String(service.service || '').toUpperCase())}</div>
             ${badgeHtml(String(service.status || 'unknown').toUpperCase(), serviceTone(service.status))}
           </div>
+          <div class="text-xs text-cyan-200/80 mt-1 break-all">${escapeHtml(describeService(service))}</div>
           <div class="text-xs text-gray-400 mt-1 break-all">${escapeHtml(service.error || service.message || '')}</div>
         </div>
       `).join('');
