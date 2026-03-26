@@ -1444,10 +1444,6 @@ async function loadOverview({ force = false } = {}) {
 function renderAwsServiceChart(summary = {}) {
   const canvas = document.getElementById('awsServiceChart');
   if (!canvas || typeof Chart === 'undefined') return;
-  canvas.removeAttribute('height');
-  canvas.removeAttribute('width');
-  canvas.style.height = '100%';
-  canvas.style.width = '100%';
   if (adminState.charts.awsServices) adminState.charts.awsServices.destroy();
   adminState.charts.awsServices = new Chart(canvas, {
     type: 'doughnut',
@@ -1467,7 +1463,6 @@ function renderAwsServiceChart(summary = {}) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: false,
       cutout: '62%',
       plugins: {
         legend: {
@@ -1482,10 +1477,6 @@ function renderAwsServiceChart(summary = {}) {
 function renderAwsBillingChart(billing = {}) {
   const canvas = document.getElementById('awsBillingChart');
   if (!canvas || typeof Chart === 'undefined') return;
-  canvas.removeAttribute('height');
-  canvas.removeAttribute('width');
-  canvas.style.height = '100%';
-  canvas.style.width = '100%';
   if (adminState.charts.awsBilling) adminState.charts.awsBilling.destroy();
   const series = Array.isArray(billing.daily_costs) ? billing.daily_costs : [];
   const labels = series.map((item) => item.date || '-');
@@ -1507,10 +1498,9 @@ function renderAwsBillingChart(billing = {}) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: false,
       scales: {
         x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148, 163, 184, 0.12)' } },
-        y: { beginAtZero: true, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148, 163, 184, 0.12)' } }
+        y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148, 163, 184, 0.12)' } }
       },
       plugins: {
         legend: {

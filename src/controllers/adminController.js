@@ -838,17 +838,13 @@ async function inspectDynamoDbTables() {
     }
   }));
   const healthyCount = tables.filter((table) => table.healthy).length;
-  const totalItems = tables.reduce((sum, table) => sum + Number(table.item_count || 0), 0);
-  const totalSizeBytes = tables.reduce((sum, table) => sum + Number(table.size_bytes || 0), 0);
   return {
     service: 'dynamodb',
     status: healthyCount === tables.length ? 'healthy' : (healthyCount ? 'degraded' : 'unavailable'),
     summary: {
       total_tables: tables.length,
       healthy_tables: healthyCount,
-      unhealthy_tables: tables.length - healthyCount,
-      total_items: totalItems,
-      total_size_bytes: totalSizeBytes
+      unhealthy_tables: tables.length - healthyCount
     },
     tables
   };
@@ -897,17 +893,13 @@ async function inspectS3Buckets() {
     }
   }));
   const healthyCount = items.filter((bucket) => bucket.healthy).length;
-  const totalSampledObjects = items.reduce((sum, bucket) => sum + Number(bucket.sampled_object_count || 0), 0);
-  const totalSampledSizeBytes = items.reduce((sum, bucket) => sum + Number(bucket.sampled_size_bytes || 0), 0);
   return {
     service: 's3',
     status: healthyCount === items.length ? 'healthy' : (healthyCount ? 'degraded' : 'unavailable'),
     summary: {
       total_buckets: items.length,
       healthy_buckets: healthyCount,
-      unhealthy_buckets: items.length - healthyCount,
-      total_sampled_objects: totalSampledObjects,
-      total_sampled_size_bytes: totalSampledSizeBytes
+      unhealthy_buckets: items.length - healthyCount
     },
     buckets: items
   };
