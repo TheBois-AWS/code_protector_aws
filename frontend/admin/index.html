@@ -6,6 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Center - GuardScript</title>
     <link rel="icon" type="image/png" href="/assets/anhnen2.png">
+    <link rel="stylesheet" href="/shared/styles/tokens.css">
+    <link rel="stylesheet" href="/shared/styles/base.css">
+    <link rel="stylesheet" href="/shared/styles/components.css">
+    <link rel="stylesheet" href="/shared/styles/utilities.css">
     <link rel="stylesheet" href="/dashboard/style.css">
     <link rel="stylesheet" href="/admin/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -94,13 +98,13 @@
     <div id="toastContainer" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div>
 
     <aside class="sidebar w-full md:w-72 flex flex-row md:flex-col py-3 md:py-6 px-3 shrink-0 fixed md:relative h-full -translate-x-full md:translate-x-0 transition-transform duration-300 z-40">
-        <button id="sidebarToggle" class="hidden md:flex items-center justify-center w-9 h-9 rounded-full bg-[#18181b] hover:bg-[#27272a] border border-[#27272a] transition-colors absolute top-1/2 -right-4 -translate-y-1/2 z-50 shadow-md cursor-pointer" onclick="toggleSidebar()" title="Toggle sidebar">
+        <button id="sidebarToggle" class="hidden md:flex items-center justify-center w-9 h-9 rounded-full bg-[#18181b] hover:bg-[#27272a] border border-[#27272a] transition-colors absolute top-1/2 -right-4 -translate-y-1/2 z-50 shadow-md cursor-pointer" data-action-click="toggleSidebar()" title="Toggle sidebar">
             <i data-lucide="chevron-left" class="w-5 h-5 text-gray-400 -ml-2"></i>
         </button>
 
         <div class="flex flex-col flex-1 min-h-0 overflow-hidden">
             <div class="flex items-center gap-3 px-3 md:mb-8">
-                <div class="flex items-center gap-3 flex-1 cursor-pointer hover:opacity-80 transition-opacity" onclick="window.location.href='/dashboard'">
+                <div class="flex items-center gap-3 flex-1 cursor-pointer hover:opacity-80 transition-opacity" data-action-click="window.location.href='/dashboard'">
                     <img src="/assets/anhnen1.png" alt="GuardScript" class="brand-logo shrink-0">
                     <span class="sidebar-label text-lg font-bold brand-text">
                         <span class="brand-word-guard">Guard</span><span class="brand-word-script">Script</span>
@@ -146,7 +150,7 @@
                     <div id="adminEmail" class="text-xs text-gray-500 truncate">System admin</div>
                 </div>
             </div>
-            <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme">
+            <button id="themeToggle" class="theme-toggle" data-action-click="toggleTheme()" title="Toggle light/dark theme">
                 <i data-lucide="sun" class="w-4 h-4" id="themeIconSun" style="display:none"></i>
                 <i data-lucide="moon" class="w-4 h-4" id="themeIconMoon"></i>
                 <span id="themeLabel" class="sidebar-label">Light Mode</span>
@@ -513,3 +517,5 @@
 </body>
 
 </html>
+
+

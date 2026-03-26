@@ -4,8 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - IrisAuth</title>
+    <title>Dashboard | GuardScript</title>
     <link rel="icon" type="image/png" href="/assets/anhnen2.png">
+    <link rel="stylesheet" href="/shared/styles/tokens.css">
+    <link rel="stylesheet" href="/shared/styles/base.css">
+    <link rel="stylesheet" href="/shared/styles/components.css">
+    <link rel="stylesheet" href="/shared/styles/utilities.css">
     <link rel="stylesheet" href="/dashboard/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -61,7 +65,7 @@
 
     <!-- Sidebar -->
     <aside class="sidebar w-full md:w-64 flex flex-row md:flex-col py-3 md:py-6 px-3 shrink-0 fixed md:relative h-full -translate-x-full md:translate-x-0 transition-transform duration-300 z-40">
-        <button id="sidebarToggle" class="hidden md:flex items-center justify-center w-9 h-9 rounded-full bg-[#18181b] hover:bg-[#27272a] border border-[#27272a] transition-colors absolute top-1/2 -right-4 -translate-y-1/2 z-50 shadow-md cursor-pointer" onclick="toggleSidebar()" title="Toggle sidebar">
+        <button id="sidebarToggle" class="hidden md:flex items-center justify-center w-9 h-9 rounded-full bg-[#18181b] hover:bg-[#27272a] border border-[#27272a] transition-colors absolute top-1/2 -right-4 -translate-y-1/2 z-50 shadow-md cursor-pointer" data-action-click="toggleSidebar()" title="Toggle sidebar">
             <i data-lucide="chevron-left" class="w-5 h-5 text-gray-400 -ml-2"></i>
         </button>
         
@@ -69,7 +73,7 @@
         <!-- Logo -->   
         <div class="flex items-center justify-between gap-3 px-3 md:mb-8 relative">
             <div class="flex items-center gap-3 flex-1 cursor-pointer hover:opacity-80 transition-opacity" 
-                onclick="window.location.href='/'">
+                data-action-click="window.location.href='/'">
                 <img src="/assets/anhnen1.png" alt="GuardScript" class="brand-logo shrink-0">
                 <span class="sidebar-label text-lg font-bold brand-text">
                     <span class="brand-word-guard">Guard</span><span class="brand-word-script">Script</span>
@@ -80,17 +84,17 @@
         <!-- Navigation -->
         <nav class="flex-1 flex flex-row md:flex-col gap-1 md:gap-0 md:space-y-1 overflow-x-auto md:overflow-visible py-2 md:py-0">
             <a class="nav-item active flex items-center gap-3 px-3 py-2.5 text-sm text-gray-200 cursor-pointer"
-                onclick="showPanel('overview', this)">
+                data-action-click="showPanel('overview', this)">
                 <i data-lucide="layout-dashboard" class="w-4 h-4 shrink-0"></i>
                 <span class="sidebar-label">Overview</span>
             </a>
             <a class="nav-item flex items-center gap-3 px-3 py-2.5 text-sm text-gray-400 cursor-pointer"
-                onclick="showPanel('workspaces', this)">
+                data-action-click="showPanel('workspaces', this)">
                 <i data-lucide="folder-code" class="w-4 h-4 shrink-0"></i>
                 <span class="sidebar-label">Workspaces</span>
             </a>
             <a class="nav-item flex items-center gap-3 px-3 py-2.5 text-sm text-gray-400 cursor-pointer"
-                onclick="showPanel('settings', this)">
+                data-action-click="showPanel('settings', this)">
                 <i data-lucide="settings" class="w-4 h-4 shrink-0"></i>
                 <span class="sidebar-label">Settings</span>
             </a>
@@ -104,7 +108,7 @@
         <!-- User Profile (Bottom) -->
         <div class="border-t border-[#27272a] pt-4 mt-4 md:mt-4 md:pt-4">
             <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#27272a] transition-colors cursor-pointer"
-                onclick="showPanel('settings', document.querySelector('[onclick*=\" settings\"]'))">
+                data-action-click="showPanel('settings', getNavElForPanel('settings'))">
                 <div
                     class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500/20 to-purple-500/20 flex items-center justify-center border border-indigo-500/30 shrink-0">
                     <i data-lucide="user" class="w-4 h-4 text-indigo-400"></i>
@@ -115,14 +119,14 @@
                 </div>
                 <i data-lucide="chevron-right" class="w-4 h-4 text-gray-600 sidebar-label shrink-0"></i>
             </div>
-            <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme">
+            <button id="themeToggle" class="theme-toggle" data-action-click="toggleTheme()" title="Toggle light/dark theme">
                 <i data-lucide="sun" class="w-4 h-4" id="themeIconSun" style="display:none"></i>
                 <i data-lucide="moon" class="w-4 h-4" id="themeIconMoon"></i>
                 <span id="themeLabel" class="sidebar-label">Light Mode</span>
             </button>
             <button
                 class="flex items-center gap-3 px-3 py-2.5 w-full text-sm text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all mt-1"
-                onclick="logout()">
+                data-action-click="logout()">
                 <i data-lucide="log-out" class="w-4 h-4 shrink-0"></i>
                 <span class="sidebar-label">Logout</span>
             </button>
@@ -141,7 +145,7 @@
                 </div>
                 <div class="flex flex-wrap gap-2">
                     <button class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
-                        onclick="openCreateWorkspaceModal()">
+                        data-action-click="openCreateWorkspaceModal()">
                         <i data-lucide="plus" class="w-4 h-4"></i>
                         New Workspace
                     </button>
@@ -212,19 +216,19 @@
             <div class="mb-8">
                 <h3 class="text-sm font-medium text-gray-400 mb-4">Quick Actions</h3>
                 <div class="flex flex-wrap gap-3">
-                    <button class="quick-action" onclick="openCreateWorkspaceModal()">
+                    <button class="quick-action" data-action-click="openCreateWorkspaceModal()">
                         <i data-lucide="folder-plus" class="w-4 h-4 text-indigo-400"></i>
                         Create Workspace
                     </button>
-                    <button class="quick-action" onclick="showPanel('workspaces', document.querySelector('.nav-item[onclick*=\'workspaces\']'))">
+                    <button class="quick-action" data-action-click="showPanel('workspaces', getNavElForPanel('workspaces'))">
                         <i data-lucide="list" class="w-4 h-4 text-emerald-400"></i>
                         View All Workspaces
                     </button>
-                    <button class="quick-action" onclick="showPanel('settings', document.querySelector('.nav-item[onclick*=\'settings\']'))">
+                    <button class="quick-action" data-action-click="showPanel('settings', getNavElForPanel('settings'))">
                         <i data-lucide="user-cog" class="w-4 h-4 text-amber-400"></i>
                         Account Settings
                     </button>
-                    <button class="quick-action" onclick="window.open('https://github.com/TheBois-AWS/code_protector', '_blank')">
+                    <button class="quick-action" data-action-click="window.open('https://github.com/TheBois-AWS/code_protector', '_blank')">
                         <i data-lucide="book-open" class="w-4 h-4 text-blue-400"></i>
                         Documentation
                     </button>
@@ -236,7 +240,7 @@
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-sm font-medium text-gray-400">Recent Workspaces</h3>
                     <a class="text-xs text-indigo-400 hover:text-indigo-300 cursor-pointer"
-                        onclick="showPanel('workspaces', document.querySelector('[onclick*=\" workspaces\"]'))">View
+                        data-action-click="showPanel('workspaces', getNavElForPanel('workspaces'))">View
                         All</a>
                 </div>
                 <div id="recentWorkspaces" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -282,7 +286,7 @@
                 </div>
                 <button
                     class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
-                    onclick="openCreateWorkspaceModal()">
+                    data-action-click="openCreateWorkspaceModal()">
                     <i data-lucide="plus" class="w-4 h-4"></i>
                     New Workspace
                 </button>
@@ -294,11 +298,11 @@
                     <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"></i>
                     <input type="text" id="workspaceSearch" placeholder="Search workspaces..."
                         class="w-full bg-[#18181b] border border-[#27272a] rounded-lg pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none"
-                        oninput="filterWorkspaces()">
+                        data-action-input="filterWorkspaces()">
                 </div>
                 <select id="workspaceSort"
                     class="w-full md:w-auto bg-[#18181b] border border-[#27272a] rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none"
-                    onchange="sortWorkspaces()">
+                    data-action-change="sortWorkspaces()">
                     <option value="newest">Newest First</option>
                     <option value="oldest">Oldest First</option>
                     <option value="name">Name A-Z</option>
@@ -354,7 +358,7 @@
                         </div>
                         <button
                             class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
-                            onclick="saveProfile()">
+                            data-action-click="saveProfile()">
                             <i data-lucide="save" class="w-4 h-4"></i>
                             Save Changes
                         </button>
@@ -381,7 +385,7 @@
                                     placeholder="Enter current password">
                                 <button type="button"
                                     class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
-                                    onclick="togglePassword('currentPassword')">
+                                    data-action-click="togglePassword('currentPassword')">
                                     <i data-lucide="eye" class="w-4 h-4"></i>
                                 </button>
                             </div>
@@ -394,7 +398,7 @@
                                     placeholder="Enter new password">
                                 <button type="button"
                                     class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
-                                    onclick="togglePassword('newPassword')">
+                                    data-action-click="togglePassword('newPassword')">
                                     <i data-lucide="eye" class="w-4 h-4"></i>
                                 </button>
                             </div>
@@ -407,14 +411,14 @@
                                     placeholder="Confirm new password">
                                 <button type="button"
                                     class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
-                                    onclick="togglePassword('confirmPassword')">
+                                    data-action-click="togglePassword('confirmPassword')">
                                     <i data-lucide="eye" class="w-4 h-4"></i>
                                 </button>
                             </div>
                         </div>
                         <button
                             class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
-                            onclick="changePassword()">
+                            data-action-click="changePassword()">
                             <i data-lucide="key" class="w-4 h-4"></i>
                             Update Password
                         </button>
@@ -468,7 +472,7 @@
                         <p class="text-gray-500 text-sm mb-4">Once you delete your account, there is no going back. All
                             your workspaces, projects, and licenses will be permanently deleted.</p>
                         <button class="btn-danger px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2"
-                            onclick="openDeleteAccountModal()">
+                            data-action-click="openDeleteAccountModal()">
                             <i data-lucide="trash-2" class="w-4 h-4"></i>
                             Delete Account
                         </button>
@@ -502,7 +506,7 @@
                     <label class="block text-sm font-medium text-gray-400 mb-2">Language / Platform</label>
                     <select id="newWorkspaceLang"
                         class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none"
-                        onchange="toggleJsSubOption()">
+                        data-action-change="toggleJsSubOption()">
                         <option value="python">Python</option>
                         <option value="lua">Lua</option>
                         <option value="javascript">JavaScript</option>
@@ -521,9 +525,9 @@
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button class="px-4 py-2.5 text-sm text-gray-400 hover:text-white transition-colors"
-                    onclick="document.getElementById('createWorkspaceModal').style.display='none'">Cancel</button>
+                    data-action-click="document.getElementById('createWorkspaceModal').style.display='none'">Cancel</button>
                 <button class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium"
-                    onclick="createWorkspace()">Create Workspace</button>
+                    data-action-click="createWorkspace()">Create Workspace</button>
             </div>
         </div>
     </div>
@@ -564,10 +568,10 @@
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button class="px-4 py-2.5 text-sm text-gray-400 hover:text-white transition-colors"
-                    onclick="document.getElementById('deleteAccountModal').style.display='none'">Cancel</button>
+                    data-action-click="document.getElementById('deleteAccountModal').style.display='none'">Cancel</button>
                 <button
                     class="bg-red-500 hover:bg-red-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-                    onclick="deleteAccount()">Delete My Account</button>
+                    data-action-click="deleteAccount()">Delete My Account</button>
             </div>
         </div>
     </div>
@@ -576,3 +580,5 @@
 </body>
 
 </html>
+
+

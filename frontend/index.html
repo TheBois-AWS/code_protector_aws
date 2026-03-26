@@ -5,6 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GuardScript | Secure Script Distribution</title>
     <link rel="icon" type="image/png" href="/assets/anhnen2.png">
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            } catch {}
+        })();
+    </script>
+    <link rel="stylesheet" href="/shared/styles/tokens.css">
+    <link rel="stylesheet" href="/shared/styles/base.css">
+    <link rel="stylesheet" href="/shared/styles/components.css">
+    <link rel="stylesheet" href="/shared/styles/utilities.css">
     <link rel="stylesheet" href="/style.css">
     <script defer src="/script.client.js"></script>
 </head>
