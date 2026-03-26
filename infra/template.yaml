@@ -235,7 +235,13 @@ Resources:
               - Effect: Allow
                 Action:
                   - cloudwatch:DescribeAlarms
+                  - cloudwatch:GetMetricStatistics
                   - logs:DescribeLogGroups
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                  - ce:GetCostForecast
                 Resource: '*'
 
   ApiFunction:

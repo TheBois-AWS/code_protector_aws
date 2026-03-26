@@ -17,7 +17,7 @@ const adminState = {
   wsShouldReconnect: true,
   wsReconnectDelay: 2000,
   fetchWrapped: false,
-  charts: { activity: null, status: null, awsServices: null },
+  charts: { activity: null, status: null, awsServices: null, awsBilling: null },
   guard: {
     open: false,
     phase: 'confirm',
@@ -141,6 +141,29 @@ function normalizeList(payload, keys = []) {
 function safeNumber(value, fallback = 0) {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function formatBytes(value) {
+  const bytes = safeNumber(value, 0);
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const sized = bytes / (1024 ** exponent);
+  return `${sized.toFixed(exponent === 0 ? 0 : 2)} ${units[exponent]}`;
+}
+
+function formatCurrency(value, currency = 'USD') {
+  const amount = safeNumber(value, 0);
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: currency || 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4
+    }).format(amount);
+  } catch {
+    return `${amount.toFixed(4)} ${currency || ''}`.trim();
+  }
 }
 
 function formatDateTime(value) {
@@ -509,6 +532,43 @@ function renderAwsServiceChart(summary = {}) {
   });
 }
 
+function renderAwsBillingChart(billing = {}) {
+  const canvas = document.getElementById('awsBillingChart');
+  if (!canvas || typeof Chart === 'undefined') return;
+  if (adminState.charts.awsBilling) adminState.charts.awsBilling.destroy();
+  const series = Array.isArray(billing.daily_costs) ? billing.daily_costs : [];
+  const labels = series.map((item) => item.date || '-');
+  const values = series.map((item) => safeNumber(item.cost || 0));
+  adminState.charts.awsBilling = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: `Daily Cost (${billing.currency || 'USD'})`,
+        data: values,
+        borderColor: '#06b6d4',
+        backgroundColor: 'rgba(6, 182, 212, 0.2)',
+        tension: 0.35,
+        fill: true,
+        pointRadius: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148, 163, 184, 0.12)' } },
+        y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148, 163, 184, 0.12)' } }
+      },
+      plugins: {
+        legend: {
+          labels: { color: '#94a3b8' }
+        }
+      }
+    }
+  });
+}
+
 function renderAwsTableWrap(target, html) {
   if (!target) return;
   target.innerHTML = html;
@@ -543,6 +603,18 @@ function renderAwsServicesPanel() {
     }
   }
 
+  const metadata = document.getElementById('awsMetadataDetails');
+  if (metadata) {
+    const info = aws.metadata || {};
+    metadata.innerHTML = `
+      <div><span class="text-gray-500">Project</span>: ${escapeHtml(info.project_name || '-')}</div>
+      <div><span class="text-gray-500">Stage</span>: ${escapeHtml(info.stage || '-')}</div>
+      <div><span class="text-gray-500">Lambda Function</span>: <span class="font-mono break-all">${escapeHtml(info.lambda_function || '-')}</span></div>
+      <div><span class="text-gray-500">Configured CF Domain</span>: ${escapeHtml(info.configured_cloudfront_domain || '-')}</div>
+      <div><span class="text-gray-500">Configured CF Dist ID</span>: <span class="font-mono break-all">${escapeHtml(info.configured_cloudfront_distribution_id || '-')}</span></div>
+    `;
+  }
+
   const lambdaDetails = document.getElementById('awsLambdaDetails');
   if (lambdaDetails) {
     const lambda = services.lambda || {};
@@ -550,8 +622,14 @@ function renderAwsServicesPanel() {
       <div><span class="text-gray-500">Function</span>: <span class="font-mono">${escapeHtml(lambda.function_name || '-')}</span></div>
       <div><span class="text-gray-500">Runtime</span>: ${escapeHtml(lambda.runtime || '-')}</div>
       <div><span class="text-gray-500">Memory/Timeout</span>: ${escapeHtml(`${safeNumber(lambda.memory_size, 0)}MB / ${safeNumber(lambda.timeout_seconds, 0)}s`)}</div>
+      <div><span class="text-gray-500">Architectures</span>: ${escapeHtml((lambda.architectures || []).join(', ') || '-')}</div>
+      <div><span class="text-gray-500">Reserved concurrency</span>: ${escapeHtml(String(safeNumber(lambda.reserved_concurrency, 0)))}</div>
       <div><span class="text-gray-500">State</span>: ${escapeHtml(lambda.state || lambda.status || '-')} (${escapeHtml(lambda.last_update_status || '-')})</div>
       <div><span class="text-gray-500">Last Modified</span>: ${escapeHtml(formatDateTime(lambda.last_modified))}</div>
+      <div><span class="text-gray-500">Invocations (24h)</span>: ${escapeHtml(String(safeNumber(lambda.metrics_24h?.invocations || 0)))}</div>
+      <div><span class="text-gray-500">Errors / Throttles (24h)</span>: ${escapeHtml(`${safeNumber(lambda.metrics_24h?.errors || 0)} / ${safeNumber(lambda.metrics_24h?.throttles || 0)}`)}</div>
+      <div><span class="text-gray-500">Error Rate / Avg Duration</span>: ${escapeHtml(`${safeNumber(lambda.metrics_24h?.error_rate_percent || 0).toFixed(4)}% / ${safeNumber(lambda.metrics_24h?.avg_duration_ms || 0).toFixed(2)} ms`)}</div>
+      ${(lambda.metric_errors || []).map((err) => `<div class="text-amber-300">${escapeHtml(err)}</div>`).join('')}
       ${lambda.error ? `<div class="text-rose-300">${escapeHtml(lambda.error)}</div>` : ''}
     `;
   }
@@ -563,7 +641,14 @@ function renderAwsServicesPanel() {
       <div><span class="text-gray-500">Distribution ID</span>: <span class="font-mono">${escapeHtml(cloudfront.distribution_id || '-')}</span></div>
       <div><span class="text-gray-500">Domain</span>: ${escapeHtml(cloudfront.domain_name || '-')}</div>
       <div><span class="text-gray-500">Deployment</span>: ${escapeHtml(cloudfront.deployment_status || cloudfront.status || '-')}</div>
+      <div><span class="text-gray-500">Lookup Method</span>: ${escapeHtml(cloudfront.lookup?.method || '-')}</div>
+      <div><span class="text-gray-500">Runtime Host</span>: ${escapeHtml(cloudfront.lookup?.runtime_host || '-')}</div>
+      <div><span class="text-gray-500">Aliases / Origins</span>: ${escapeHtml(`${safeNumber(cloudfront.aliases?.length || 0)} / ${safeNumber(cloudfront.origins?.length || 0)}`)}</div>
+      <div><span class="text-gray-500">Requests 24h</span>: ${escapeHtml(String(safeNumber(cloudfront.metrics_24h?.requests || 0)))}</div>
+      <div><span class="text-gray-500">4xx / 5xx avg</span>: ${escapeHtml(`${safeNumber(cloudfront.metrics_24h?.avg_4xx_error_rate || 0).toFixed(4)}% / ${safeNumber(cloudfront.metrics_24h?.avg_5xx_error_rate || 0).toFixed(4)}%`)}</div>
+      <div><span class="text-gray-500">Bytes Downloaded 24h</span>: ${escapeHtml(formatBytes(cloudfront.metrics_24h?.bytes_downloaded || 0))}</div>
       <div><span class="text-gray-500">Probe</span>: ${escapeHtml(cloudfront.health_probe?.message || '-')}</div>
+      ${(cloudfront.metric_errors || []).map((err) => `<div class="text-amber-300">${escapeHtml(err)}</div>`).join('')}
       ${cloudfront.error ? `<div class="text-rose-300">${escapeHtml(cloudfront.error)}</div>` : ''}
     `;
   }
@@ -604,15 +689,17 @@ function renderAwsServicesPanel() {
   else {
     renderAwsTableWrap(dynamoWrap, `
       <table class="admin-table">
-        <thead><tr><th>Table</th><th>Status</th><th>Items</th><th>GSI</th><th>Billing</th><th>Error</th></tr></thead>
+        <thead><tr><th>Table</th><th>Status</th><th>Items</th><th>Size</th><th>GSI</th><th>Billing / Class</th><th>Stream</th><th>Error</th></tr></thead>
         <tbody>
           ${dynamoTables.map((table) => `
             <tr>
               <td class="text-sm text-gray-300 font-mono break-all">${escapeHtml(table.name || '-')}</td>
               <td>${badgeHtml(table.status || '-', serviceTone(table.healthy ? 'healthy' : 'degraded'))}</td>
               <td class="text-sm text-gray-300">${escapeHtml(String(safeNumber(table.item_count || 0)))}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(formatBytes(table.size_bytes || 0))}</td>
               <td class="text-sm text-gray-300">${escapeHtml(String(safeNumber(table.gsi_count || 0)))}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(table.billing_mode || '-')}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(`${table.billing_mode || '-'} / ${table.table_class || '-'}`)}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(table.stream_enabled ? (table.stream_view_type || 'Enabled') : 'Disabled')}</td>
               <td class="text-xs text-rose-300">${escapeHtml(table.error || '')}</td>
             </tr>
           `).join('')}
@@ -628,7 +715,7 @@ function renderAwsServicesPanel() {
   else {
     renderAwsTableWrap(s3Wrap, `
       <table class="admin-table">
-        <thead><tr><th>Bucket</th><th>Status</th><th>Region</th><th>Versioning</th><th>Encryption</th><th>Error</th></tr></thead>
+        <thead><tr><th>Bucket</th><th>Status</th><th>Region</th><th>Versioning</th><th>Encryption</th><th>Sampled Objects</th><th>Sampled Size</th><th>Error</th></tr></thead>
         <tbody>
           ${buckets.map((bucket) => `
             <tr>
@@ -637,12 +724,43 @@ function renderAwsServicesPanel() {
               <td class="text-sm text-gray-300">${escapeHtml(bucket.region || '-')}</td>
               <td class="text-sm text-gray-300">${escapeHtml(bucket.versioning || '-')}</td>
               <td class="text-sm text-gray-300">${escapeHtml(bucket.encryption || '-')}</td>
-              <td class="text-xs text-rose-300">${escapeHtml(bucket.error || '')}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(`${safeNumber(bucket.sampled_object_count || 0)}${bucket.sampled_listing_truncated ? '+' : ''}`)}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(formatBytes(bucket.sampled_size_bytes || 0))}</td>
+              <td class="text-xs text-rose-300">${escapeHtml(bucket.error || bucket.sampled_listing_error || '')}</td>
             </tr>
           `).join('')}
         </tbody>
       </table>
     `);
+  }
+
+  const billingDetails = document.getElementById('awsBillingDetails');
+  const billing = services.billing || {};
+  if (billingDetails) {
+    billingDetails.innerHTML = `
+      <div><span class="text-gray-500">Provider</span>: ${escapeHtml(billing.provider || '-')}</div>
+      <div><span class="text-gray-500">Month-to-date</span>: ${escapeHtml(formatCurrency(billing.month_to_date_total || 0, billing.currency || 'USD'))}</div>
+      <div><span class="text-gray-500">Forecast this month</span>: ${escapeHtml(formatCurrency(billing.forecast_month_total || 0, billing.currency || 'USD'))}</div>
+      <div><span class="text-gray-500">Period</span>: ${escapeHtml(`${billing.period_start || '-'} -> ${billing.period_end || '-'}`)}</div>
+      ${billing.error ? `<div class="text-rose-300">${escapeHtml(billing.error)}</div>` : ''}
+    `;
+  }
+  renderAwsBillingChart(billing);
+
+  const billingBreakdown = document.getElementById('awsBillingBreakdown');
+  if (billingBreakdown) {
+    const rows = Array.isArray(billing.service_breakdown) ? billing.service_breakdown : [];
+    if (!rows.length) renderEmpty(billingBreakdown, 'No billing breakdown', 'Cost Explorer breakdown is not available yet.');
+    else {
+      billingBreakdown.innerHTML = rows.map((row) => `
+        <div class="summary-card">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm text-gray-200 break-all">${escapeHtml(row.service || 'Unknown')}</div>
+            <div class="text-sm font-semibold text-white">${escapeHtml(formatCurrency(row.cost || 0, billing.currency || 'USD'))}</div>
+          </div>
+        </div>
+      `).join('');
+    }
   }
 
   lucide.createIcons();

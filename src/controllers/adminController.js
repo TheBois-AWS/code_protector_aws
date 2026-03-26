@@ -5,13 +5,14 @@ import { nowIso, randomId, sortByDateDesc } from '../utils/common.js';
 import { broadcastAdminEvent } from '../utils/realtime.js';
 import { destroyWorkspaceData } from './workspaceController.js';
 import { config } from '../config.js';
-import { cloudFrontClient, cloudWatchClient, cloudWatchLogsClient, ddbClient, lambdaClient, s3 } from '../services/aws.js';
+import { cloudFrontClient, cloudWatchClient, cloudWatchGlobalClient, cloudWatchLogsClient, costExplorerClient, ddbClient, lambdaClient, s3 } from '../services/aws.js';
 import { DescribeTableCommand } from '@aws-sdk/client-dynamodb';
-import { GetBucketEncryptionCommand, GetBucketLocationCommand, GetBucketVersioningCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
+import { GetBucketEncryptionCommand, GetBucketLocationCommand, GetBucketVersioningCommand, HeadBucketCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { GetFunctionConfigurationCommand } from '@aws-sdk/client-lambda';
 import { GetDistributionCommand, ListDistributionsCommand } from '@aws-sdk/client-cloudfront';
-import { DescribeAlarmsCommand } from '@aws-sdk/client-cloudwatch';
+import { DescribeAlarmsCommand, GetMetricStatisticsCommand } from '@aws-sdk/client-cloudwatch';
 import { DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
+import { GetCostAndUsageCommand, GetCostForecastCommand } from '@aws-sdk/client-cost-explorer';
 
 const GUARD_CHALLENGE_PREFIX = 'admin_guard_challenge:';
 const GUARD_TOKEN_PREFIX = 'admin_guard_token:';
@@ -336,6 +337,89 @@ async function probeUrl(url, timeoutMs = 4000) {
   }
 }
 
+function toUtcDateParts(date) {
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth(),
+    day: date.getUTCDate()
+  };
+}
+
+function toYmd(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function buildMonthRange(now = new Date()) {
+  const { year, month, day } = toUtcDateParts(now);
+  const start = new Date(Date.UTC(year, month, 1));
+  const endExclusive = new Date(Date.UTC(year, month, day + 1));
+  const nextMonthStart = new Date(Date.UTC(year, month + 1, 1));
+  return { start, endExclusive, nextMonthStart };
+}
+
+function normalizeHost(value) {
+  return normalizeText(value).replace(/^https?:\/\//i, '').replace(/\/+$/, '').replace(/:\d+$/, '');
+}
+
+function parseCost(value) {
+  const parsed = Number.parseFloat(String(value ?? '0'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toMetricSummary(datapoints, stat) {
+  if (!Array.isArray(datapoints) || datapoints.length === 0) {
+    return { latest: 0, total: 0, average: 0, points: [] };
+  }
+  const sorted = [...datapoints]
+    .map((point) => ({
+      timestamp: point.Timestamp ? new Date(point.Timestamp).toISOString() : null,
+      value: Number(point?.[stat] || 0)
+    }))
+    .filter((point) => point.timestamp && Number.isFinite(point.value))
+    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  if (!sorted.length) {
+    return { latest: 0, total: 0, average: 0, points: [] };
+  }
+  const total = sorted.reduce((sum, point) => sum + point.value, 0);
+  return {
+    latest: sorted[sorted.length - 1].value,
+    total,
+    average: total / sorted.length,
+    points: sorted
+  };
+}
+
+async function fetchMetricStatistics(client, { namespace, metricName, dimensions, stat = 'Sum', period = 300, startTime, endTime, unit = undefined }) {
+  try {
+    const result = await client.send(new GetMetricStatisticsCommand({
+      Namespace: namespace,
+      MetricName: metricName,
+      Dimensions: dimensions,
+      StartTime: startTime,
+      EndTime: endTime,
+      Period: period,
+      Statistics: [stat],
+      Unit: unit
+    }));
+    return { ok: true, summary: toMetricSummary(result?.Datapoints || [], stat) };
+  } catch (error) {
+    return { ok: false, error: formatAwsError(error), summary: { latest: 0, total: 0, average: 0, points: [] } };
+  }
+}
+
+function resolveDistributionByHost(items = [], host = '') {
+  const expectedHost = normalizeLower(host);
+  if (!expectedHost) return null;
+  return items.find((item) => {
+    const domain = normalizeLower(item?.DomainName);
+    const aliases = (item?.Aliases?.Items || []).map((alias) => normalizeLower(alias));
+    const origins = (item?.Origins?.Items || []).map((origin) => normalizeLower(origin?.DomainName));
+    return domain === expectedHost
+      || aliases.includes(expectedHost)
+      || origins.includes(expectedHost);
+  }) || null;
+}
+
 async function inspectDynamoDbTables() {
   const tableNames = uniqueStrings(Object.values(config.tables || {}));
   const tables = await Promise.all(tableNames.map(async (tableName) => {
@@ -348,6 +432,10 @@ async function inspectDynamoDbTables() {
         item_count: Number(table.ItemCount || 0),
         size_bytes: Number(table.TableSizeBytes || 0),
         billing_mode: normalizeText(table.BillingModeSummary?.BillingMode || 'PAY_PER_REQUEST'),
+        table_class: normalizeText(table.TableClassSummary?.TableClass || 'STANDARD'),
+        stream_enabled: Boolean(table.StreamSpecification?.StreamEnabled),
+        stream_view_type: normalizeText(table.StreamSpecification?.StreamViewType || ''),
+        deletion_protection_enabled: Boolean(table.DeletionProtectionEnabled),
         gsi_count: Array.isArray(table.GlobalSecondaryIndexes) ? table.GlobalSecondaryIndexes.length : 0,
         arn: normalizeText(table.TableArn),
         healthy: normalizeLower(table.TableStatus) === 'active'
@@ -379,10 +467,11 @@ async function inspectS3Buckets() {
   const items = await Promise.all(buckets.map(async (bucketName) => {
     try {
       await s3.send(new HeadBucketCommand({ Bucket: bucketName }));
-      const [location, versioning, encryption] = await Promise.allSettled([
+      const [location, versioning, encryption, listing] = await Promise.allSettled([
         s3.send(new GetBucketLocationCommand({ Bucket: bucketName })),
         s3.send(new GetBucketVersioningCommand({ Bucket: bucketName })),
-        s3.send(new GetBucketEncryptionCommand({ Bucket: bucketName }))
+        s3.send(new GetBucketEncryptionCommand({ Bucket: bucketName })),
+        s3.send(new ListObjectsV2Command({ Bucket: bucketName, MaxKeys: 1000 }))
       ]);
       const locationValue = location.status === 'fulfilled'
         ? normalizeText(location.value?.LocationConstraint || 'us-east-1')
@@ -391,12 +480,19 @@ async function inspectS3Buckets() {
         ? normalizeText(versioning.value?.Status || 'Disabled')
         : 'Unknown';
       const encryptionEnabled = encryption.status === 'fulfilled';
+      const listedObjects = listing.status === 'fulfilled' ? (listing.value?.Contents || []) : [];
+      const sampledSizeBytes = listedObjects.reduce((sum, object) => sum + Number(object?.Size || 0), 0);
+      const listingError = listing.status === 'rejected' ? formatAwsError(listing.reason) : '';
       return {
         name: bucketName,
         status: 'ACTIVE',
         region: locationValue || config.aws.region,
         versioning: versioningValue,
         encryption: encryptionEnabled ? 'Enabled' : 'Not configured',
+        sampled_object_count: listedObjects.length,
+        sampled_size_bytes: sampledSizeBytes,
+        sampled_listing_truncated: listing.status === 'fulfilled' ? Boolean(listing.value?.IsTruncated) : false,
+        sampled_listing_error: listingError,
         healthy: true
       };
     } catch (error) {
@@ -431,20 +527,84 @@ async function inspectLambdaService() {
     };
   }
   try {
-    const result = await lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
+    const now = new Date();
+    const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const [result, invocations, errors, throttles, duration] = await Promise.all([
+      lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: functionName })),
+      fetchMetricStatistics(cloudWatchClient, {
+        namespace: 'AWS/Lambda',
+        metricName: 'Invocations',
+        dimensions: [{ Name: 'FunctionName', Value: functionName }],
+        stat: 'Sum',
+        period: 300,
+        startTime,
+        endTime: now
+      }),
+      fetchMetricStatistics(cloudWatchClient, {
+        namespace: 'AWS/Lambda',
+        metricName: 'Errors',
+        dimensions: [{ Name: 'FunctionName', Value: functionName }],
+        stat: 'Sum',
+        period: 300,
+        startTime,
+        endTime: now
+      }),
+      fetchMetricStatistics(cloudWatchClient, {
+        namespace: 'AWS/Lambda',
+        metricName: 'Throttles',
+        dimensions: [{ Name: 'FunctionName', Value: functionName }],
+        stat: 'Sum',
+        period: 300,
+        startTime,
+        endTime: now
+      }),
+      fetchMetricStatistics(cloudWatchClient, {
+        namespace: 'AWS/Lambda',
+        metricName: 'Duration',
+        dimensions: [{ Name: 'FunctionName', Value: functionName }],
+        stat: 'Average',
+        period: 300,
+        startTime,
+        endTime: now
+      })
+    ]);
     const state = normalizeText(result?.State || 'Unknown');
     const lastUpdateStatus = normalizeText(result?.LastUpdateStatus || 'Unknown');
+    const metricErrors = [invocations, errors, throttles, duration]
+      .filter((item) => !item.ok && item.error)
+      .map((item) => item.error);
+    const invocationTotal = Number(invocations.summary?.total || 0);
+    const errorTotal = Number(errors.summary?.total || 0);
+    const throttleTotal = Number(throttles.summary?.total || 0);
+    const durationAvgMs = Number(duration.summary?.average || 0);
+    const errorRate = invocationTotal > 0 ? (errorTotal / invocationTotal) * 100 : 0;
     return {
       service: 'lambda',
-      status: normalizeLower(state) === 'active' && normalizeLower(lastUpdateStatus) === 'successful' ? 'healthy' : 'degraded',
+      status: normalizeLower(state) === 'active'
+        && normalizeLower(lastUpdateStatus) === 'successful'
+        && throttleTotal === 0
+        ? 'healthy'
+        : 'degraded',
       function_name: functionName,
       runtime: normalizeText(result?.Runtime),
       memory_size: Number(result?.MemorySize || 0),
       timeout_seconds: Number(result?.Timeout || 0),
+      architectures: result?.Architectures || [],
+      reserved_concurrency: Number(result?.ReservedConcurrentExecutions || 0),
       state,
       last_update_status: lastUpdateStatus,
       last_modified: normalizeText(result?.LastModified),
-      version: normalizeText(result?.Version)
+      version: normalizeText(result?.Version),
+      metrics_24h: {
+        window_start: startTime.toISOString(),
+        window_end: now.toISOString(),
+        invocations: invocationTotal,
+        errors: errorTotal,
+        throttles: throttleTotal,
+        error_rate_percent: Number(errorRate.toFixed(4)),
+        avg_duration_ms: Number(durationAvgMs.toFixed(2))
+      },
+      metric_errors: metricErrors
     };
   } catch (error) {
     return {
@@ -456,31 +616,49 @@ async function inspectLambdaService() {
   }
 }
 
-async function inspectCloudFrontService(requestHost = '') {
+async function inspectCloudFrontService(requestHeaders = {}) {
   const configuredDistributionId = normalizeText(config.aws.cloudFrontDistributionId);
-  const configuredDomain = normalizeText(config.aws.cloudFrontDomainName || config.baseUrl).replace(/^https?:\/\//i, '').replace(/\/+$/, '');
-  const runtimeHost = normalizeText(requestHost).replace(/:\d+$/, '');
-  const expectedHost = configuredDomain || runtimeHost;
+  const configuredDomain = normalizeHost(config.aws.cloudFrontDomainName || config.baseUrl);
+  const runtimeHost = normalizeHost(requestHeaders?.host || requestHeaders?.Host || '');
+  const forwardedHost = normalizeHost(requestHeaders?.['x-forwarded-host'] || requestHeaders?.['X-Forwarded-Host'] || '');
+  const hostCandidates = uniqueStrings([configuredDomain, forwardedHost, runtimeHost]);
 
   let distributionId = configuredDistributionId;
+  let lookupMethod = configuredDistributionId ? 'config.distribution_id' : '';
   let lookupError = '';
   let listedDistribution = null;
-  if (!distributionId && expectedHost) {
+  if (!distributionId) {
     try {
       const list = await cloudFrontClient.send(new ListDistributionsCommand({ MaxItems: '100' }));
       const items = list?.DistributionList?.Items || [];
-      listedDistribution = items.find((item) => {
-        const aliases = item?.Aliases?.Items || [];
-        return normalizeLower(item?.DomainName) === normalizeLower(expectedHost)
-          || aliases.some((alias) => normalizeLower(alias) === normalizeLower(expectedHost));
-      }) || null;
+
+      // 1) match by public host/alias first.
+      for (const host of hostCandidates) {
+        listedDistribution = resolveDistributionByHost(items, host);
+        if (listedDistribution) {
+          lookupMethod = host === configuredDomain
+            ? 'host.configured_domain'
+            : (host === forwardedHost ? 'host.x_forwarded_host' : 'host.runtime_host');
+          break;
+        }
+      }
+
+      // 2) when host is Lambda URL (origin host), match by origin domain.
+      if (!listedDistribution && runtimeHost) {
+        listedDistribution = items.find((item) => {
+          const origins = (item?.Origins?.Items || []).map((origin) => normalizeLower(origin?.DomainName));
+          return origins.includes(normalizeLower(runtimeHost));
+        }) || null;
+        if (listedDistribution) lookupMethod = 'origin.runtime_host';
+      }
+
       distributionId = normalizeText(listedDistribution?.Id);
     } catch (error) {
       lookupError = formatAwsError(error);
     }
   }
 
-  const probeHost = expectedHost || normalizeText(listedDistribution?.DomainName);
+  const probeHost = normalizeHost(configuredDomain || listedDistribution?.DomainName || runtimeHost || forwardedHost);
   const healthProbe = await probeUrl(probeHost ? `https://${probeHost}/api/health` : '');
   if (!distributionId) {
     return {
@@ -490,26 +668,97 @@ async function inspectCloudFrontService(requestHost = '') {
       domain_name: probeHost,
       deployment_status: normalizeText(listedDistribution?.Status),
       enabled: Boolean(listedDistribution?.Enabled),
+      lookup: {
+        method: lookupMethod || 'not_resolved',
+        configured_domain: configuredDomain,
+        runtime_host: runtimeHost,
+        forwarded_host: forwardedHost
+      },
       health_probe: healthProbe,
       error: lookupError || 'CloudFront distribution not resolved for current host'
     };
   }
 
   try {
-    const result = await cloudFrontClient.send(new GetDistributionCommand({ Id: distributionId }));
+    const now = new Date();
+    const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const [result, requests, bytesDownloaded, err4xx, err5xx] = await Promise.all([
+      cloudFrontClient.send(new GetDistributionCommand({ Id: distributionId })),
+      fetchMetricStatistics(cloudWatchGlobalClient, {
+        namespace: 'AWS/CloudFront',
+        metricName: 'Requests',
+        dimensions: [{ Name: 'DistributionId', Value: distributionId }, { Name: 'Region', Value: 'Global' }],
+        stat: 'Sum',
+        period: 300,
+        startTime,
+        endTime: now
+      }),
+      fetchMetricStatistics(cloudWatchGlobalClient, {
+        namespace: 'AWS/CloudFront',
+        metricName: 'BytesDownloaded',
+        dimensions: [{ Name: 'DistributionId', Value: distributionId }, { Name: 'Region', Value: 'Global' }],
+        stat: 'Sum',
+        period: 300,
+        startTime,
+        endTime: now
+      }),
+      fetchMetricStatistics(cloudWatchGlobalClient, {
+        namespace: 'AWS/CloudFront',
+        metricName: '4xxErrorRate',
+        dimensions: [{ Name: 'DistributionId', Value: distributionId }, { Name: 'Region', Value: 'Global' }],
+        stat: 'Average',
+        period: 300,
+        startTime,
+        endTime: now
+      }),
+      fetchMetricStatistics(cloudWatchGlobalClient, {
+        namespace: 'AWS/CloudFront',
+        metricName: '5xxErrorRate',
+        dimensions: [{ Name: 'DistributionId', Value: distributionId }, { Name: 'Region', Value: 'Global' }],
+        stat: 'Average',
+        period: 300,
+        startTime,
+        endTime: now
+      })
+    ]);
     const distribution = result?.Distribution || {};
     const configData = distribution.DistributionConfig || {};
     const deployed = normalizeLower(distribution.Status) === 'deployed';
     const enabled = Boolean(configData.Enabled);
+    const metricErrors = [requests, bytesDownloaded, err4xx, err5xx]
+      .filter((metric) => !metric.ok && metric.error)
+      .map((metric) => metric.error);
     return {
       service: 'cloudfront',
       status: deployed && enabled && healthProbe.ok ? 'healthy' : 'degraded',
       distribution_id: distributionId,
       domain_name: normalizeText(distribution.DomainName || probeHost),
+      aliases: configData?.Aliases?.Items || [],
+      origins: (configData?.Origins?.Items || []).map((origin) => ({
+        id: normalizeText(origin?.Id),
+        domain_name: normalizeText(origin?.DomainName),
+        origin_path: normalizeText(origin?.OriginPath)
+      })),
+      price_class: normalizeText(configData?.PriceClass || ''),
       deployment_status: normalizeText(distribution.Status),
       enabled,
       in_progress_invalidations: Number(distribution.InProgressInvalidationBatches || 0),
       last_modified: distribution.LastModifiedTime ? new Date(distribution.LastModifiedTime).toISOString() : null,
+      lookup: {
+        method: lookupMethod || 'distribution_id',
+        configured_domain: configuredDomain,
+        runtime_host: runtimeHost,
+        forwarded_host: forwardedHost
+      },
+      metrics_24h: {
+        window_start: startTime.toISOString(),
+        window_end: now.toISOString(),
+        requests: Number(requests.summary?.total || 0),
+        bytes_downloaded: Number(bytesDownloaded.summary?.total || 0),
+        avg_4xx_error_rate: Number((err4xx.summary?.average || 0).toFixed(4)),
+        avg_5xx_error_rate: Number((err5xx.summary?.average || 0).toFixed(4))
+      },
+      metric_errors: metricErrors,
       health_probe: healthProbe
     };
   } catch (error) {
@@ -518,6 +767,12 @@ async function inspectCloudFrontService(requestHost = '') {
       status: healthProbe.ok ? 'degraded' : 'unavailable',
       distribution_id: distributionId,
       domain_name: probeHost,
+      lookup: {
+        method: lookupMethod || 'distribution_id',
+        configured_domain: configuredDomain,
+        runtime_host: runtimeHost,
+        forwarded_host: forwardedHost
+      },
       health_probe: healthProbe,
       error: formatAwsError(error)
     };
@@ -576,6 +831,77 @@ async function inspectCloudWatchService() {
     active_alarm_count: activeAlarms.length,
     errors: [logGroupError, alarmsError].filter(Boolean)
   };
+}
+
+async function inspectBillingService() {
+  const { start, endExclusive, nextMonthStart } = buildMonthRange(new Date());
+  const startDate = toYmd(start);
+  const endDate = toYmd(endExclusive);
+  const nextMonthDate = toYmd(nextMonthStart);
+
+  try {
+    const [costAndUsage, forecast] = await Promise.all([
+      costExplorerClient.send(new GetCostAndUsageCommand({
+        TimePeriod: { Start: startDate, End: endDate },
+        Granularity: 'DAILY',
+        Metrics: ['UnblendedCost'],
+        GroupBy: [{ Type: 'DIMENSION', Key: 'SERVICE' }]
+      })),
+      costExplorerClient.send(new GetCostForecastCommand({
+        TimePeriod: { Start: endDate, End: nextMonthDate },
+        Metric: 'UNBLENDED_COST',
+        Granularity: 'MONTHLY'
+      }))
+    ]);
+
+    const dailyCosts = (costAndUsage?.ResultsByTime || []).map((item) => ({
+      date: normalizeText(item?.TimePeriod?.Start),
+      cost: parseCost(item?.Total?.UnblendedCost?.Amount || 0)
+    }));
+    const monthToDateTotal = dailyCosts.reduce((sum, item) => sum + item.cost, 0);
+
+    const byService = new Map();
+    for (const day of costAndUsage?.ResultsByTime || []) {
+      for (const group of day?.Groups || []) {
+        const serviceName = normalizeText(group?.Keys?.[0] || 'Unknown');
+        const amount = parseCost(group?.Metrics?.UnblendedCost?.Amount || 0);
+        byService.set(serviceName, (byService.get(serviceName) || 0) + amount);
+      }
+    }
+    const serviceBreakdown = [...byService.entries()]
+      .map(([service, cost]) => ({ service, cost }))
+      .sort((left, right) => right.cost - left.cost)
+      .slice(0, 10);
+    const forecastTotal = parseCost(forecast?.Total?.Amount || 0);
+    const currency = normalizeText(forecast?.Total?.Unit || costAndUsage?.ResultsByTime?.[0]?.Total?.UnblendedCost?.Unit || 'USD');
+
+    return {
+      service: 'billing',
+      status: 'healthy',
+      provider: 'cost_explorer',
+      currency,
+      period_start: startDate,
+      period_end: endDate,
+      month_to_date_total: Number(monthToDateTotal.toFixed(4)),
+      forecast_month_total: Number(forecastTotal.toFixed(4)),
+      daily_costs: dailyCosts,
+      service_breakdown: serviceBreakdown
+    };
+  } catch (error) {
+    return {
+      service: 'billing',
+      status: 'degraded',
+      provider: 'cost_explorer',
+      currency: 'USD',
+      period_start: startDate,
+      period_end: endDate,
+      month_to_date_total: 0,
+      forecast_month_total: 0,
+      daily_costs: [],
+      service_breakdown: [],
+      error: formatAwsError(error)
+    };
+  }
 }
 
 function summarizeServiceStatuses(services = []) {
@@ -651,30 +977,39 @@ export async function getAdminOverview(request) {
 export async function getAdminAwsServices(request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
-  const requestHost = normalizeText(request?.headers?.host || request?.headers?.Host || '');
+  const requestHeaders = request?.headers || {};
 
   const [lambda, dynamodb, s3Status, cloudfront, cloudwatch] = await Promise.all([
     inspectLambdaService(),
     inspectDynamoDbTables(),
     inspectS3Buckets(),
-    inspectCloudFrontService(requestHost),
+    inspectCloudFrontService(requestHeaders),
     inspectCloudWatchService()
   ]);
 
-  const services = [lambda, cloudfront, dynamodb, s3Status, cloudwatch];
+  const billing = await inspectBillingService();
+  const services = [lambda, cloudfront, dynamodb, s3Status, cloudwatch, billing];
   const summary = summarizeServiceStatuses(services);
   return jsonResponse(200, {
     success: true,
     aws: {
       checked_at: nowIso(),
       region: normalizeText(config.aws.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1'),
+      metadata: {
+        project_name: normalizeText(config.aws.projectName),
+        stage: normalizeText(config.aws.stage),
+        lambda_function: normalizeText(config.aws.functionName),
+        configured_cloudfront_domain: normalizeText(config.aws.cloudFrontDomainName),
+        configured_cloudfront_distribution_id: normalizeText(config.aws.cloudFrontDistributionId)
+      },
       summary,
       services: {
         lambda,
         cloudfront,
         dynamodb,
         s3: s3Status,
-        cloudwatch
+        cloudwatch,
+        billing
       }
     }
   });
