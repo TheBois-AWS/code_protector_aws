@@ -21,7 +21,8 @@ export const config = {
     websocketConnections: process.env.DDB_TABLE_WEBSOCKET_CONNECTIONS || process.env.DDB_WEBSOCKET_CONNECTIONS_TABLE || 'websocket_connections',
     pinVerifications: process.env.DDB_TABLE_PIN_VERIFICATIONS || process.env.DDB_PIN_VERIFICATIONS_TABLE || 'pin_verifications',
     rateLimits: process.env.DDB_TABLE_RATE_LIMITS || process.env.DDB_RATE_LIMITS_TABLE || 'rate_limits',
-    appConfig: process.env.DDB_TABLE_APP_CONFIG || process.env.DDB_APP_CONFIG_TABLE || 'app_config'
+    appConfig: process.env.DDB_TABLE_APP_CONFIG || process.env.DDB_APP_CONFIG_TABLE || 'app_config',
+    adminAudit: process.env.DDB_TABLE_ADMIN_AUDIT || process.env.DDB_ADMIN_AUDIT_TABLE || 'admin_audit'
   },
   indexes: {
     usersByEmail: process.env.DDB_INDEX_USERS_BY_EMAIL || 'EmailIndex',
@@ -40,6 +41,8 @@ export const config = {
     logsByWorkspace: process.env.DDB_INDEX_LOGS_BY_WORKSPACE || 'WorkspaceIndex',
     websocketByUser: process.env.DDB_INDEX_WEBSOCKET_BY_USER || 'UserIndex',
     websocketByWorkspace: process.env.DDB_INDEX_WEBSOCKET_BY_WORKSPACE || 'WorkspaceIndex',
-    pinByWorkspace: process.env.DDB_INDEX_PIN_BY_WORKSPACE || 'WorkspaceIndex'
+    pinByWorkspace: process.env.DDB_INDEX_PIN_BY_WORKSPACE || 'WorkspaceIndex',
+    adminAuditByActor: process.env.DDB_INDEX_ADMIN_AUDIT_BY_ACTOR || 'ActorIndex',
+    adminAuditByTarget: process.env.DDB_INDEX_ADMIN_AUDIT_BY_TARGET || 'TargetIndex'
   }
 };

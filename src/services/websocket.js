@@ -71,6 +71,18 @@ export async function broadcastToUser(userId, message, endpointHint = '') {
   return delivered;
 }
 
+export async function broadcastToChannel(channel, message, endpointHint = '') {
+  const normalizedChannel = String(channel || '').trim();
+  if (!normalizedChannel) return 0;
+  const connections = await websocketConnectionsRepo.listByChannel(normalizedChannel);
+  if (!connections.length) return 0;
+  let delivered = 0;
+  for (const connection of connections) {
+    if (await sendToConnection(connection, message, endpointHint)) delivered += 1;
+  }
+  return delivered;
+}
+
 export async function closeConnection(connectionId) {
   await websocketConnectionsRepo.deleteByConnectionId(String(connectionId));
 }

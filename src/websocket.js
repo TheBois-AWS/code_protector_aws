@@ -1,4 +1,4 @@
-import { getUserIdFromRequest } from './utils/auth.js';
+import { getUserIdFromRequest, isSystemAdminByUserId } from './utils/auth.js';
 import { getWorkspaceAccess, hasPermission, resolveWorkspace } from './utils/workspace.js';
 import { websocketConnectionsRepo } from './services/repositories.js';
 import { nowIso } from './utils/common.js';
@@ -38,6 +38,7 @@ function parseTarget(query = {}) {
     const userId = String(query.userId || query.user_id || query.id || '').trim();
     if (userId) return { kind: 'user', userId };
   }
+  if (channel === 'admin') return { kind: 'admin' };
 
   return null;
 }
@@ -91,6 +92,17 @@ async function handleConnect(event) {
       ...baseConnection,
       channel: 'workspace',
       workspace_id: String(workspace.id)
+    });
+    return json(200, { success: true });
+  }
+
+  if (target.kind === 'admin') {
+    const admin = await isSystemAdminByUserId(userId);
+    if (!admin) return json(403, { success: false, error: 'Forbidden' });
+    await websocketConnectionsRepo.putConnection({
+      ...baseConnection,
+      channel: 'admin',
+      workspace_id: undefined
     });
     return json(200, { success: true });
   }

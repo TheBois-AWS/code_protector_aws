@@ -1,4 +1,5 @@
-import { accessListsRepo, logsRepo, projectsRepo, workspaceInvitationsRepo, workspaceMembersRepo, workspacesRepo } from '../services/repositories.js';
+import { accessListsRepo, logsRepo, projectsRepo, usersRepo, workspaceInvitationsRepo, workspaceMembersRepo, workspacesRepo } from '../services/repositories.js';
+import { isSystemAdmin } from './auth.js';
 
 export const ROLE_HIERARCHY = {
   owner: 4,
@@ -24,15 +25,27 @@ export async function resolveWorkspace(identifier) {
   return (await workspacesRepo.getById(String(identifier))) || (await workspacesRepo.findByLoaderKey(String(identifier)));
 }
 
-export async function getWorkspaceAccess(workspaceId, userId) {
+export function isWorkspaceActive(workspace) {
+  const status = String(workspace?.status || 'active').toLowerCase();
+  return status === 'active';
+}
+
+export async function getWorkspaceAccess(workspaceId, userId, options = {}) {
+  const { allowSystemAdmin = true, allowSuspendedForSystemAdmin = true } = options || {};
   const workspace = await workspacesRepo.getById(String(workspaceId));
   if (!workspace) return null;
+  const user = await usersRepo.getById(String(userId));
+  const systemAdmin = allowSystemAdmin && isSystemAdmin(user);
+  if (!isWorkspaceActive(workspace) && !(systemAdmin && allowSuspendedForSystemAdmin)) return null;
+  if (systemAdmin) {
+    return { workspace, role: 'owner', isOwner: false, isSystemAdmin: true, user };
+  }
   if (String(workspace.user_id) === String(userId)) {
-    return { workspace, role: 'owner', isOwner: true };
+    return { workspace, role: 'owner', isOwner: true, isSystemAdmin: false, user };
   }
   const member = await workspaceMembersRepo.findByWorkspaceAndUser(String(workspaceId), String(userId));
   if (!member) return null;
-  return { workspace, role: member.role || 'viewer', isOwner: false, member };
+  return { workspace, role: member.role || 'viewer', isOwner: false, member, isSystemAdmin: false, user };
 }
 
 export async function listWorkspaceInvitations(workspaceId) {

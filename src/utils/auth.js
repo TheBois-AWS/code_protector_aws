@@ -1,13 +1,14 @@
 import crypto from 'crypto';
 import { base64UrlDecode, base64UrlEncode } from './crypto.js';
 import { appConfigRepo, usersRepo } from '../services/repositories.js';
-import { parseCookies } from './http.js';
+import { forbidden, parseCookies, unauthorized } from './http.js';
 
 const TOKEN_PREFIX = 'v2';
 const AUTH_SECRET_KEY = 'auth_secret';
 const PBKDF2_ITERATIONS = 210000;
 const PBKDF2_SALT_BYTES = 16;
 const PBKDF2_KEY_BYTES = 32;
+const SYSTEM_ADMIN_ROLE = 'admin';
 
 function base64UrlEncodeBytes(bytes) {
   return Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
@@ -34,6 +35,10 @@ async function getOrCreateAuthSecret() {
   const created = base64UrlEncodeBytes(crypto.randomBytes(48));
   await appConfigRepo.set(AUTH_SECRET_KEY, created);
   return created;
+}
+
+export async function getAuthSecret() {
+  return await getOrCreateAuthSecret();
 }
 
 function hmacBase64(secret, data) {
@@ -123,4 +128,27 @@ export async function getUserIdFromRequest(request) {
   return String(user.id);
 }
 
-export { TOKEN_PREFIX };
+export async function getUserFromRequest(request) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) return null;
+  return await usersRepo.getById(String(userId));
+}
+
+export function isSystemAdmin(user) {
+  return Boolean(user && String(user.status || 'active') === 'active' && String(user.role || '').toLowerCase() === SYSTEM_ADMIN_ROLE);
+}
+
+export async function isSystemAdminByUserId(userId) {
+  if (!userId) return false;
+  const user = await usersRepo.getById(String(userId));
+  return isSystemAdmin(user);
+}
+
+export async function requireSystemAdmin(request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return { ok: false, response: unauthorized() };
+  if (!isSystemAdmin(user)) return { ok: false, response: forbidden() };
+  return { ok: true, user };
+}
+
+export { SYSTEM_ADMIN_ROLE, TOKEN_PREFIX };

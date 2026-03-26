@@ -1,4 +1,4 @@
-import { broadcastToUser, broadcastToWorkspace } from '../services/websocket.js';
+import { broadcastToChannel, broadcastToUser, broadcastToWorkspace } from '../services/websocket.js';
 
 export async function broadcastWorkspaceEvent(workspaceId, type, data = {}) {
   if (!workspaceId) return 0;
@@ -16,6 +16,15 @@ export async function broadcastUserEvent(userId, type, data = {}) {
     return await broadcastToUser(String(userId), { type, data });
   } catch (error) {
     console.error('user realtime broadcast failed', { userId, type, error: error?.message || String(error) });
+    return 0;
+  }
+}
+
+export async function broadcastAdminEvent(type, data = {}) {
+  try {
+    return await broadcastToChannel('admin', { type, data });
+  } catch (error) {
+    console.error('admin realtime broadcast failed', { type, error: error?.message || String(error) });
     return 0;
   }
 }

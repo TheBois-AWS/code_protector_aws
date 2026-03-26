@@ -17,6 +17,8 @@ Required DynamoDB GSIs for production efficiency:
 - websocket_connections.user_id-index (user_id)
 - websocket_connections.workspace_id-index (workspace_id)
 - pin_verifications.workspace_id-index (workspace_id)
+- admin_audit.actor_user_id-index (actor_user_id)
+- admin_audit.target_id-index (target_id)
 
 The helpers below fall back to Scan when an index is unavailable so local development can still work.
 */
@@ -127,6 +129,7 @@ const accessBase = createStandardRepo(config.tables.accessLists);
 const logsBase = createStandardRepo(config.tables.logs);
 const websocketConnectionsBase = createStandardRepo(config.tables.websocketConnections, 'connection_id');
 const pinBase = createStandardRepo(config.tables.pinVerifications, 'token');
+const adminAuditBase = createStandardRepo(config.tables.adminAudit);
 
 export const usersRepo = {
   ...usersBase,
@@ -237,6 +240,9 @@ export const websocketConnectionsRepo = {
   },
   async listByWorkspace(workspaceId) {
     return await queryByField(config.tables.websocketConnections, config.indexes.websocketByWorkspace, 'workspace_id', String(workspaceId));
+  },
+  async listByChannel(channel) {
+    return await scanItems(config.tables.websocketConnections, { channel: String(channel) });
   }
 };
 
@@ -255,6 +261,12 @@ export const appConfigRepo = {
   async set(key, value) {
     await putItem(config.tables.appConfig, { key, value });
     return value;
+  },
+  async list() {
+    return await scanItems(config.tables.appConfig);
+  },
+  async delete(key) {
+    await deleteItem(config.tables.appConfig, { key: String(key) });
   }
 };
 
@@ -278,5 +290,33 @@ export const rateLimitsRepo = {
         ':inc': 1
       }
     }));
+  },
+  async list() {
+    return await scanItems(config.tables.rateLimits);
+  },
+  async delete(key) {
+    await deleteItem(config.tables.rateLimits, { key: String(key) });
+  }
+};
+
+export const adminAuditRepo = {
+  ...adminAuditBase,
+  async listRecent(limit = 200) {
+    const items = await adminAuditBase.scan();
+    return [...items]
+      .sort((left, right) => Number(right.timestamp || 0) - Number(left.timestamp || 0))
+      .slice(0, Math.max(1, Math.min(Number(limit || 200), 1000)));
+  },
+  async listByActor(actorUserId, limit = 200) {
+    const items = await queryByField(config.tables.adminAudit, config.indexes.adminAuditByActor, 'actor_user_id', String(actorUserId));
+    return [...items]
+      .sort((left, right) => Number(right.timestamp || 0) - Number(left.timestamp || 0))
+      .slice(0, Math.max(1, Math.min(Number(limit || 200), 1000)));
+  },
+  async listByTarget(targetId, limit = 200) {
+    const items = await queryByField(config.tables.adminAudit, config.indexes.adminAuditByTarget, 'target_id', String(targetId));
+    return [...items]
+      .sort((left, right) => Number(right.timestamp || 0) - Number(left.timestamp || 0))
+      .slice(0, Math.max(1, Math.min(Number(limit || 200), 1000)));
   }
 };

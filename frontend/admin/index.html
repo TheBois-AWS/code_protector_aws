@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Center - GuardScript</title>
+    <link rel="icon" type="image/png" href="/assets/anhnen2.png">
+    <link rel="stylesheet" href="/dashboard/style.css">
+    <link rel="stylesheet" href="/admin/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        html.auth-pending body {
+            visibility: hidden;
+            opacity: 0;
+        }
+    </style>
+    <script>
+        (function () {
+            document.documentElement.classList.add('auth-pending');
+            const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+            const loginRedirect = () => {
+                window.location.replace('/login?returnTo=' + encodeURIComponent(currentPath || '/admin'));
+            };
+            const dashboardRedirect = () => {
+                window.location.replace('/dashboard');
+            };
+
+            try {
+                const theme = localStorage.getItem('theme');
+                if (theme === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    loginRedirect();
+                    return;
+                }
+
+                (async () => {
+                    try {
+                        const res = await fetch('/api/user/profile', {
+                            headers: { Authorization: token }
+                        });
+                        if (!res.ok) {
+                            localStorage.removeItem('token');
+                            loginRedirect();
+                            return;
+                        }
+
+                        const data = await res.json();
+                        const user = data?.user || null;
+                        if (!user || user.status !== 'active' || user.role !== 'admin') {
+                            dashboardRedirect();
+                            return;
+                        }
+
+                        window.__ADMIN_PROFILE__ = user;
+                        window.__ADMIN_TOKEN__ = token;
+                    } catch (error) {
+                        console.error('Admin guard failed', error);
+                        localStorage.removeItem('token');
+                        loginRedirect();
+                        return;
+                    } finally {
+                        document.documentElement.classList.remove('auth-pending');
+                    }
+                })();
+            } catch (error) {
+                console.error('Admin guard bootstrap failed', error);
+                loginRedirect();
+            }
+        })();
+    </script>
+    <script defer src="/admin/script.client.js"></script>
+</head>
+
+<body class="admin-shell flex flex-col md:flex-row h-screen overflow-hidden">
+    <button id="mobileSidebarToggle" class="fixed top-4 left-4 z-50 md:hidden p-2 bg-zinc-800 rounded-lg border border-zinc-700" aria-label="Toggle menu">
+        <i data-lucide="menu" class="w-5 h-5 text-white"></i>
+    </button>
+
+    <div id="mobileSidebarBackdrop" class="mobile-sidebar-backdrop" aria-hidden="true"></div>
+
+    <div id="networkStatusBanner" class="network-status-banner" role="status" aria-live="polite">
+        <i data-lucide="wifi-off" class="w-4 h-4"></i>
+        <span id="networkStatusText">Connection issue detected. Some actions may fail.</span>
+        <button id="networkRetryButton" type="button">Retry</button>
+    </div>
+
+    <div id="toastContainer" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div>
+
+    <aside class="sidebar w-full md:w-72 flex flex-row md:flex-col py-3 md:py-6 px-3 shrink-0 fixed md:relative h-full -translate-x-full md:translate-x-0 transition-transform duration-300 z-40">
+        <button id="sidebarToggle" class="hidden md:flex items-center justify-center w-9 h-9 rounded-full bg-[#18181b] hover:bg-[#27272a] border border-[#27272a] transition-colors absolute top-1/2 -right-4 -translate-y-1/2 z-50 shadow-md cursor-pointer" onclick="toggleSidebar()" title="Toggle sidebar">
+            <i data-lucide="chevron-left" class="w-5 h-5 text-gray-400 -ml-2"></i>
+        </button>
+
+        <div class="flex flex-col flex-1 min-h-0 overflow-hidden">
+            <div class="flex items-center gap-3 px-3 md:mb-8">
+                <div class="flex items-center gap-3 flex-1 cursor-pointer hover:opacity-80 transition-opacity" onclick="window.location.href='/dashboard'">
+                    <img src="/assets/anhnen1.png" alt="GuardScript" class="brand-logo shrink-0">
+                    <span class="sidebar-label text-lg font-bold brand-text">
+                        <span class="brand-word-guard">Guard</span><span class="brand-word-script">Script</span>
+                    </span>
+                </div>
+            </div>
+
+            <nav class="flex-1 flex flex-row md:flex-col gap-1 md:gap-0 md:space-y-1 overflow-x-auto md:overflow-visible py-2 md:py-0">
+                <a class="admin-tab-link nav-item active flex items-center gap-3 px-3 py-2.5 text-sm text-gray-200 cursor-pointer" data-admin-tab="overview">
+                    <i data-lucide="layout-dashboard" class="w-4 h-4 shrink-0"></i>
+                    <span class="sidebar-label">Overview</span>
+                </a>
+                <a class="admin-tab-link nav-item flex items-center gap-3 px-3 py-2.5 text-sm text-gray-400 cursor-pointer" data-admin-tab="users">
+                    <i data-lucide="users" class="w-4 h-4 shrink-0"></i>
+                    <span class="sidebar-label">Users</span>
+                </a>
+                <a class="admin-tab-link nav-item flex items-center gap-3 px-3 py-2.5 text-sm text-gray-400 cursor-pointer" data-admin-tab="workspaces">
+                    <i data-lucide="folder-code" class="w-4 h-4 shrink-0"></i>
+                    <span class="sidebar-label">Workspaces</span>
+                </a>
+                <a class="admin-tab-link nav-item flex items-center gap-3 px-3 py-2.5 text-sm text-gray-400 cursor-pointer" data-admin-tab="entities">
+                    <i data-lucide="database" class="w-4 h-4 shrink-0"></i>
+                    <span class="sidebar-label">Entity Console</span>
+                </a>
+                <a class="admin-tab-link nav-item flex items-center gap-3 px-3 py-2.5 text-sm text-gray-400 cursor-pointer" data-admin-tab="audit">
+                    <i data-lucide="file-text" class="w-4 h-4 shrink-0"></i>
+                    <span class="sidebar-label">Audit</span>
+                </a>
+            </nav>
+        </div>
+
+        <div class="border-t border-[#27272a] pt-4 mt-4 md:mt-4 md:pt-4">
+            <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#27272a] transition-colors">
+                <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500/20 to-sky-500/20 flex items-center justify-center border border-cyan-500/30 shrink-0">
+                    <i data-lucide="shield-check" class="w-4 h-4 text-cyan-400"></i>
+                </div>
+                <div class="flex-1 min-w-0 sidebar-label">
+                    <div id="adminUsername" class="text-sm font-medium text-white truncate">Loading...</div>
+                    <div id="adminEmail" class="text-xs text-gray-500 truncate">System admin</div>
+                </div>
+            </div>
+            <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme">
+                <i data-lucide="sun" class="w-4 h-4" id="themeIconSun" style="display:none"></i>
+                <i data-lucide="moon" class="w-4 h-4" id="themeIconMoon"></i>
+                <span id="themeLabel" class="sidebar-label">Light Mode</span>
+            </button>
+            <button id="refreshAllButton" class="flex items-center gap-3 px-3 py-2.5 w-full text-sm text-gray-200 hover:text-white hover:bg-cyan-500/10 rounded-lg transition-all mt-1 border border-transparent hover:border-cyan-500/20">
+                <i data-lucide="refresh-cw" class="w-4 h-4 shrink-0"></i>
+                <span class="sidebar-label">Refresh All</span>
+            </button>
+            <button class="flex items-center gap-3 px-3 py-2.5 w-full text-sm text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all mt-1" id="logoutButton">
+                <i data-lucide="log-out" class="w-4 h-4 shrink-0"></i>
+                <span class="sidebar-label">Logout</span>
+            </button>
+        </div>
+    </aside>
+
+    <main class="flex-1 overflow-auto bg-[#09090b] admin-main">
+        <header class="admin-header p-4 md:p-8 pb-4 md:pb-6">
+            <div class="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
+                <div>
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="icon-box indigo">
+                            <i data-lucide="shield" class="w-5 h-5 text-cyan-400"></i>
+                        </div>
+                        <span class="admin-badge">System Admin</span>
+                    </div>
+                    <h1 class="text-3xl font-bold text-white">Admin Control Center</h1>
+                    <p class="text-gray-400 text-sm mt-1 max-w-3xl">Manage users, workspaces, code content, and audit trails from one place. Destructive actions require a reason and a short-lived guard token.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2" id="refreshCurrentButton">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                        Refresh Current
+                    </button>
+                    <button class="quick-action" id="exportAuditButton">
+                        <i data-lucide="download" class="w-4 h-4 text-cyan-400"></i>
+                        Export Audit
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <section id="overviewPanel" class="view-panel admin-panel active px-4 md:px-8 pb-8">
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+                <article class="stat-card p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="icon-box indigo"><i data-lucide="users" class="w-5 h-5 text-cyan-400"></i></div>
+                        <span class="text-xs text-cyan-400" id="usersTrend">-</span>
+                    </div>
+                    <div id="overviewUsersCount" class="text-2xl font-bold text-white">-</div>
+                    <p class="text-gray-500 text-xs mt-1">Total Users</p>
+                </article>
+                <article class="stat-card p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="icon-box emerald"><i data-lucide="folder-code" class="w-5 h-5 text-emerald-400"></i></div>
+                        <span class="text-xs text-emerald-400" id="workspacesTrend">-</span>
+                    </div>
+                    <div id="overviewWorkspacesCount" class="text-2xl font-bold text-white">-</div>
+                    <p class="text-gray-500 text-xs mt-1">Workspaces</p>
+                </article>
+                <article class="stat-card p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="icon-box amber"><i data-lucide="file-code" class="w-5 h-5 text-amber-400"></i></div>
+                        <span class="text-xs text-amber-400" id="projectsTrend">-</span>
+                    </div>
+                    <div id="overviewProjectsCount" class="text-2xl font-bold text-white">-</div>
+                    <p class="text-gray-500 text-xs mt-1">Projects</p>
+                </article>
+                <article class="stat-card p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="icon-box rose"><i data-lucide="activity" class="w-5 h-5 text-rose-400"></i></div>
+                        <span class="text-xs text-rose-400" id="logsTrend">-</span>
+                    </div>
+                    <div id="overviewLogsCount" class="text-2xl font-bold text-white">-</div>
+                    <p class="text-gray-500 text-xs mt-1">Recent Events</p>
+                </article>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
+                <article class="admin-card chart-card xl:col-span-2 p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-lg font-semibold text-white">System Activity</h2>
+                            <p class="text-sm text-gray-500">Mutations and audit volume over time.</p>
+                        </div>
+                        <button class="quick-action" id="refreshOverviewButton">
+                            <i data-lucide="refresh-cw" class="w-4 h-4 text-cyan-400"></i>
+                            Refresh
+                        </button>
+                    </div>
+                    <canvas id="activityChart" height="120"></canvas>
+                </article>
+                <article class="admin-card chart-card p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-lg font-semibold text-white">Status Split</h2>
+                            <p class="text-sm text-gray-500">Active vs suspended users/workspaces.</p>
+                        </div>
+                    </div>
+                    <canvas id="statusChart" height="180"></canvas>
+                </article>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <article class="admin-card p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-lg font-semibold text-white">Recent Admin Actions</h2>
+                            <p class="text-sm text-gray-500">Latest mutations streamed from audit storage.</p>
+                        </div>
+                        <button class="quick-action" data-refresh-panel="audit">
+                            <i data-lucide="file-text" class="w-4 h-4 text-cyan-400"></i>
+                            Open Audit
+                        </button>
+                    </div>
+                    <div id="recentActivityList" class="space-y-3"></div>
+                </article>
+                <article class="admin-card p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-lg font-semibold text-white">System Health</h2>
+                            <p class="text-sm text-gray-500">Quick signals for operators.</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <div class="rounded-xl border border-white/10 bg-white/5 p-4">
+                            <div class="text-gray-500 mb-1">Rate limits</div>
+                            <div id="healthRateLimits" class="text-white text-xl font-semibold">-</div>
+                        </div>
+                        <div class="rounded-xl border border-white/10 bg-white/5 p-4">
+                            <div class="text-gray-500 mb-1">Suspended</div>
+                            <div id="healthSuspended" class="text-white text-xl font-semibold">-</div>
+                        </div>
+                        <div class="rounded-xl border border-white/10 bg-white/5 p-4">
+                            <div class="text-gray-500 mb-1">Active users</div>
+                            <div id="healthActiveUsers" class="text-white text-xl font-semibold">-</div>
+                        </div>
+                        <div class="rounded-xl border border-white/10 bg-white/5 p-4">
+                            <div class="text-gray-500 mb-1">Active workspaces</div>
+                            <div id="healthActiveWorkspaces" class="text-white text-xl font-semibold">-</div>
+                        </div>
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <section id="usersPanel" class="view-panel admin-panel px-4 md:px-8 pb-8">
+            <div class="admin-section-header">
+                <div>
+                    <h2 class="text-2xl font-bold text-white">Users</h2>
+                    <p class="text-sm text-gray-500">Search, edit, suspend, activate, and hard delete system users.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <input id="userSearch" class="admin-input" type="search" placeholder="Search users by name, email, or role">
+                    <select id="userStatusFilter" class="admin-input">
+                        <option value="all">All statuses</option>
+                        <option value="active">Active</option>
+                        <option value="suspended">Suspended</option>
+                    </select>
+                    <button class="quick-action" data-refresh-panel="users"><i data-lucide="refresh-cw" class="w-4 h-4 text-cyan-400"></i>Refresh</button>
+                </div>
+            </div>
+            <div id="usersTableWrap" class="admin-table-wrap"></div>
+        </section>
+
+        <section id="workspacesPanel" class="view-panel admin-panel px-4 md:px-8 pb-8">
+            <div class="admin-section-header">
+                <div>
+                    <h2 class="text-2xl font-bold text-white">Workspaces</h2>
+                    <p class="text-sm text-gray-500">Operate on any workspace without membership checks.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <input id="workspaceSearch" class="admin-input" type="search" placeholder="Search by name, owner, loader key">
+                    <select id="workspaceStatusFilter" class="admin-input">
+                        <option value="all">All statuses</option>
+                        <option value="active">Active</option>
+                        <option value="suspended">Suspended</option>
+                    </select>
+                    <button class="quick-action" data-refresh-panel="workspaces"><i data-lucide="refresh-cw" class="w-4 h-4 text-cyan-400"></i>Refresh</button>
+                </div>
+            </div>
+            <div id="workspacesTableWrap" class="admin-table-wrap"></div>
+        </section>
+
+        <section id="entitiesPanel" class="view-panel admin-panel px-4 md:px-8 pb-8">
+            <div class="admin-section-header">
+                <div>
+                    <h2 class="text-2xl font-bold text-white">Entity Console</h2>
+                    <p class="text-sm text-gray-500">Inspect full code content, nested project/file data, licenses, access, and team structures.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <input id="entityLookup" class="admin-input" type="search" placeholder="Workspace ID, loader key, user email, or entity ID">
+                    <button class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2" id="inspectEntityButton">
+                        <i data-lucide="search" class="w-4 h-4"></i>
+                        Inspect
+                    </button>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                <article class="admin-card p-5 xl:col-span-1">
+                    <h3 class="text-lg font-semibold text-white mb-3">Quick Targets</h3>
+                    <div id="entityQuickTargets" class="space-y-2"></div>
+                </article>
+                <article class="admin-card p-5 xl:col-span-2">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <h3 class="text-lg font-semibold text-white">Entity Details</h3>
+                            <p class="text-sm text-gray-500">Rendered summary and raw JSON snapshot.</p>
+                        </div>
+                        <button class="quick-action" id="copyEntityJsonButton">
+                            <i data-lucide="copy" class="w-4 h-4 text-cyan-400"></i>
+                            Copy JSON
+                        </button>
+                    </div>
+                    <div id="entitySummary" class="entity-summary"></div>
+                    <pre id="entityJson" class="entity-json mt-4">Select an entity to inspect.</pre>
+                </article>
+            </div>
+        </section>
+
+        <section id="auditPanel" class="view-panel admin-panel px-4 md:px-8 pb-8">
+            <div class="admin-section-header">
+                <div>
+                    <h2 class="text-2xl font-bold text-white">Audit</h2>
+                    <p class="text-sm text-gray-500">Filter and export system-level admin actions.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <input id="auditSearch" class="admin-input" type="search" placeholder="Search action, target, actor, reason">
+                    <input id="auditDateFrom" class="admin-input" type="date">
+                    <input id="auditDateTo" class="admin-input" type="date">
+                    <button class="quick-action" data-refresh-panel="audit"><i data-lucide="refresh-cw" class="w-4 h-4 text-cyan-400"></i>Refresh</button>
+                </div>
+            </div>
+            <div class="flex flex-wrap gap-2 mb-4">
+                <button class="quick-action" id="auditJsonButton"><i data-lucide="download" class="w-4 h-4 text-cyan-400"></i>JSON</button>
+                <button class="quick-action" id="auditCsvButton"><i data-lucide="table-2" class="w-4 h-4 text-cyan-400"></i>CSV</button>
+            </div>
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <article class="admin-card p-5">
+                    <h3 class="text-lg font-semibold text-white mb-3">Timeline</h3>
+                    <div id="auditTimeline" class="space-y-3"></div>
+                </article>
+                <article class="admin-card p-5">
+                    <h3 class="text-lg font-semibold text-white mb-3">Records</h3>
+                    <div id="auditTableWrap" class="admin-table-wrap"></div>
+                </article>
+            </div>
+        </section>
+    </main>
+
+    <div id="adminActionModal" class="modal-backdrop" style="display:none;">
+        <div class="modal-content admin-modal">
+            <div class="flex items-start justify-between gap-4 mb-4">
+                <div>
+                    <p class="admin-step-label" id="adminActionStepLabel">Step 1 of 2</p>
+                    <h3 class="text-xl font-semibold text-white" id="adminActionTitle">Confirm Destructive Action</h3>
+                </div>
+                <button class="text-gray-400 hover:text-white" data-close-admin-modal>
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <p id="adminActionDescription" class="text-sm text-gray-400 mb-4"></p>
+            <label class="block text-sm text-gray-300 mb-2">Reason</label>
+            <textarea id="adminActionReason" class="admin-input admin-textarea" rows="3" placeholder="Explain why this action is required"></textarea>
+            <div id="adminActionChallengeWrap" class="mt-4 hidden">
+                <label class="block text-sm text-gray-300 mb-2">Verify Challenge</label>
+                <div class="rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-4 text-sm text-cyan-100" id="adminActionChallenge"></div>
+                <input id="adminActionChallengeInput" class="admin-input mt-3" type="text" placeholder="Type the challenge exactly as shown">
+            </div>
+            <div class="flex flex-wrap justify-end gap-2 mt-6">
+                <button class="quick-action" data-close-admin-modal>Cancel</button>
+                <button class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2" id="adminActionPrimaryButton">
+                    <i data-lucide="shield-check" class="w-4 h-4"></i>
+                    Generate Guard Token
+                </button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

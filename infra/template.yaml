@@ -185,6 +185,7 @@ Resources:
                   - !GetAtt PinVerificationsTable.Arn
                   - !GetAtt RateLimitsTable.Arn
                   - !GetAtt AppConfigTable.Arn
+                  - !GetAtt AdminAuditTable.Arn
                   - !Sub '${UsersTable.Arn}/index/*'
                   - !Sub '${WorkspacesTable.Arn}/index/*'
                   - !Sub '${WorkspaceMembersTable.Arn}/index/*'
@@ -196,6 +197,7 @@ Resources:
                   - !Sub '${LogsTable.Arn}/index/*'
                   - !Sub '${WebSocketConnectionsTable.Arn}/index/*'
                   - !Sub '${PinVerificationsTable.Arn}/index/*'
+                  - !Sub '${AdminAuditTable.Arn}/index/*'
               - Effect: Allow
                 Action:
                   - execute-api:ManageConnections
@@ -243,6 +245,9 @@ Resources:
           DDB_TABLE_PIN_VERIFICATIONS: !Ref PinVerificationsTable
           DDB_TABLE_RATE_LIMITS: !Ref RateLimitsTable
           DDB_TABLE_APP_CONFIG: !Ref AppConfigTable
+          DDB_TABLE_ADMIN_AUDIT: !Ref AdminAuditTable
+          DDB_INDEX_ADMIN_AUDIT_BY_ACTOR: ActorIndex
+          DDB_INDEX_ADMIN_AUDIT_BY_TARGET: TargetIndex
           WS_API_ENDPOINT: !Sub 'https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
 
   ApiFunctionLogGroup:
@@ -372,6 +377,7 @@ Resources:
           - Authorization
           - Content-Type
           - Cookie
+          - X-Admin-Guard-Token
           - X-Pin-Token
           - X-Requested-With
           - Origin
@@ -468,7 +474,7 @@ Resources:
             return request;
           }
 
-          if (uri === '/login' || uri === '/register' || uri === '/dashboard') {
+          if (uri === '/login' || uri === '/register' || uri === '/dashboard' || uri === '/admin') {
             request.uri = uri + '/index.html';
             return request;
           }
@@ -976,6 +982,37 @@ Resources:
         - AttributeName: key
           KeyType: HASH
 
+  AdminAuditTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-${Stage}-admin-audit'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: actor_user_id
+          AttributeType: S
+        - AttributeName: target_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ActorIndex
+          KeySchema:
+            - AttributeName: actor_user_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: TargetIndex
+          KeySchema:
+            - AttributeName: target_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
 Outputs:
   FrontendBucketName:
     Value: !Ref FrontendBucket
@@ -1024,3 +1061,5 @@ Outputs:
     Value: !Ref LogsTable
   WebSocketConnectionsTableName:
     Value: !Ref WebSocketConnectionsTable
+  AdminAuditTableName:
+    Value: !Ref AdminAuditTable

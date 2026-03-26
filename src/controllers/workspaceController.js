@@ -1,7 +1,7 @@
 import { createCookie, getClientIp, jsonResponse, parseJsonBody, serverError, unauthorized } from '../utils/http.js';
 import { appConfigRepo, logsRepo, pinVerificationsRepo, projectFilesRepo, projectsRepo, usersRepo, workspaceInvitationsRepo, workspaceMembersRepo, workspacesRepo, licensesRepo, accessListsRepo } from '../services/repositories.js';
 import { buildRateLimitKey, checkRateLimit } from '../utils/rateLimit.js';
-import { getUserIdFromRequest, hashPassword, verifyPassword } from '../utils/auth.js';
+import { getUserIdFromRequest, hashPassword, isSystemAdminByUserId, verifyPassword } from '../utils/auth.js';
 import { generateWorkspaceKey } from '../utils/crypto.js';
 import { nowIso, randomId, sortByDateDesc } from '../utils/common.js';
 import { storage } from '../services/storage.js';
@@ -152,6 +152,7 @@ export async function createWorkspace(request) {
     default_project_id: null,
     default_script_id: null,
     discord_webhook: '',
+    status: 'active',
     pin_hash: null,
     pin_enabled: 0,
     encryption_key: generateWorkspaceKey(),
@@ -231,7 +232,8 @@ export async function updateWorkspaceSettings(request, identifier) {
 
   const workspace = await resolveWorkspace(identifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
-  if (String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Access denied' });
+  const systemAdmin = await isSystemAdminByUserId(userId);
+  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Access denied' });
 
   let defaultProjectId = workspace.default_project_id || null;
   if (payload.default_project_id !== undefined || payload.default_script_id !== undefined) {
@@ -266,7 +268,8 @@ export async function deleteWorkspace(request, identifier) {
   if (!userId) return unauthorized();
   const workspace = await resolveWorkspace(identifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
-  if (String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Access denied' });
+  const systemAdmin = await isSystemAdminByUserId(userId);
+  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Access denied' });
 
   await destroyWorkspaceData(String(workspace.id));
   await broadcastUserEvent(userId, 'WORKSPACE_UPDATE', {
@@ -311,7 +314,8 @@ export async function setWorkspacePin(request, identifier) {
   if (!userId) return unauthorized();
   const workspace = await resolveWorkspace(identifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
-  if (String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Only workspace owner can set PIN' });
+  const systemAdmin = await isSystemAdminByUserId(userId);
+  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Only workspace owner can set PIN' });
 
   const payload = parseJsonBody(request);
   if (!payload || !/^\d{6}$/.test(String(payload.pin || ''))) return jsonResponse(400, { success: false, error: 'PIN must be exactly 6 digits' });
@@ -361,7 +365,8 @@ export async function removeWorkspacePin(request, identifier) {
   if (!userId) return unauthorized();
   const workspace = await resolveWorkspace(identifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
-  if (String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Only workspace owner can remove PIN' });
+  const systemAdmin = await isSystemAdminByUserId(userId);
+  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Only workspace owner can remove PIN' });
 
   await workspacesRepo.update(String(workspace.id), { pin_hash: null, pin_enabled: 0 });
   for (const pin of await pinVerificationsRepo.listByWorkspace(String(workspace.id))) {

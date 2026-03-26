@@ -116,6 +116,9 @@ async function resolveScriptContent(id, licenseKey) {
   if (!workspace || !project) {
     return { error: 'Invalid ID', status: 404 };
   }
+  if (String(workspace.status || 'active').toLowerCase() !== 'active') {
+    return { error: 'Workspace suspended', status: 403 };
+  }
 
   if (licenseKey) {
     const license = await licensesRepo.findByKey(String(licenseKey));

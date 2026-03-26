@@ -16,7 +16,7 @@ export function getCorsHeaders(headers = {}) {
     'access-control-allow-origin': allowOrigin,
     'access-control-allow-credentials': 'true',
     'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type,authorization,x-pin-token',
+    'access-control-allow-headers': 'content-type,authorization,x-pin-token,x-admin-guard-token',
     vary: 'origin'
   };
 }

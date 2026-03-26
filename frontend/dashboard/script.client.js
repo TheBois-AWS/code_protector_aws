@@ -83,6 +83,7 @@ if (!token) {
 // Global State
 let allWorkspaces = [];
 let userProfile = null;
+let currentUserRole = 'viewer';
 let dashboardWs = null;
 let dashboardWsReconnectTimer = null;
 let dashboardWsEndpoint = null;
@@ -410,11 +411,22 @@ async function loadUserProfile() {
     
     if (data.success) {
       userProfile = data.user;
+      currentUserRole = data.user.role || 'viewer';
       connectDashboardWebSocket(data.user.id);
       
       // Update sidebar
       document.getElementById('sidebarUsername').textContent = data.user.display_name || 'User';
       document.getElementById('sidebarEmail').textContent = data.user.email;
+      const adminNavItem = document.getElementById('adminNavItem');
+      if (adminNavItem) {
+        if (currentUserRole === 'admin' && data.user.status === 'active') {
+          adminNavItem.classList.remove('hidden');
+          adminNavItem.classList.add('flex');
+        } else {
+          adminNavItem.classList.add('hidden');
+          adminNavItem.classList.remove('flex');
+        }
+      }
       
       // Update settings form
       document.getElementById('settingsDisplayName').value = data.user.display_name || '';

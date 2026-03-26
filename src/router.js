@@ -6,6 +6,7 @@ import * as licenseController from './controllers/licenseController.js';
 import * as accessController from './controllers/accessController.js';
 import * as teamController from './controllers/teamController.js';
 import * as loaderController from './controllers/loaderController.js';
+import * as adminController from './controllers/adminController.js';
 import { jsonResponse, methodNotAllowed, notFound } from './utils/http.js';
 import { config } from './config.js';
 
@@ -25,6 +26,23 @@ const routes = [
   { method: 'PUT', path: '/api/user/profile', handler: (req) => authController.updateProfile(req) },
   { method: 'GET', path: '/api/user/stats', handler: (req) => authController.getUserStats(req) },
   { method: 'DELETE', path: '/api/user/account', handler: (req) => authController.deleteAccount(req) },
+
+  // Admin
+  { method: 'GET', path: '/api/admin/overview', handler: (req) => adminController.getAdminOverview(req) },
+  { method: 'GET', path: '/api/admin/users', handler: (req) => adminController.listAdminUsers(req) },
+  { method: 'GET', path: '/api/admin/users/:id', handler: (req, params) => adminController.getAdminUser(req, params.id) },
+  { method: 'PATCH', path: '/api/admin/users/:id', handler: (req, params) => adminController.patchAdminUser(req, params.id) },
+  { method: 'POST', path: '/api/admin/users/:id/suspend', handler: (req, params) => adminController.suspendAdminUser(req, params.id) },
+  { method: 'POST', path: '/api/admin/users/:id/activate', handler: (req, params) => adminController.activateAdminUser(req, params.id) },
+  { method: 'DELETE', path: '/api/admin/users/:id', handler: (req, params) => adminController.deleteAdminUser(req, params.id) },
+  { method: 'GET', path: '/api/admin/workspaces', handler: (req) => adminController.listAdminWorkspaces(req) },
+  { method: 'GET', path: '/api/admin/workspaces/:id', handler: (req, params) => adminController.getAdminWorkspace(req, params.id) },
+  { method: 'POST', path: '/api/admin/workspaces/:id/suspend', handler: (req, params) => adminController.suspendAdminWorkspace(req, params.id) },
+  { method: 'POST', path: '/api/admin/workspaces/:id/activate', handler: (req, params) => adminController.activateAdminWorkspace(req, params.id) },
+  { method: 'DELETE', path: '/api/admin/workspaces/:id', handler: (req, params) => adminController.deleteAdminWorkspace(req, params.id) },
+  { method: 'GET', path: '/api/admin/audit', handler: (req) => adminController.getAdminAudit(req) },
+  { method: 'POST', path: '/api/admin/guard/start', handler: (req) => adminController.startAdminGuard(req) },
+  { method: 'POST', path: '/api/admin/guard/verify', handler: (req) => adminController.verifyAdminGuard(req) },
 
   // Workspaces
   { method: 'GET', path: '/api/workspaces', handler: (req) => workspaceController.listWorkspaces(req) },
