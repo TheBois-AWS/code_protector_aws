@@ -508,8 +508,13 @@ Resources:
           }
 
           if (!hasExtension && protectedRoute) {
-            var cookieHeader = request.headers && request.headers.cookie ? request.headers.cookie.value : '';
-            var hasToken = /(^|;\s*)token=/.test(cookieHeader || '');
+            var hasToken = false;
+            if (request.cookies && request.cookies.token && request.cookies.token.value) {
+              hasToken = true;
+            } else {
+              var cookieHeader = request.headers && request.headers.cookie ? request.headers.cookie.value : '';
+              hasToken = /(^|;\s*)token=/.test(cookieHeader || '');
+            }
             if (!hasToken) {
               var returnTo = uri;
               if (rawUri && rawUri !== uri) {
