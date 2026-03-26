@@ -41,6 +41,7 @@ const routes = [
   { method: 'POST', path: '/api/admin/workspaces/:id/activate', handler: (req, params) => adminController.activateAdminWorkspace(req, params.id) },
   { method: 'DELETE', path: '/api/admin/workspaces/:id', handler: (req, params) => adminController.deleteAdminWorkspace(req, params.id) },
   { method: 'GET', path: '/api/admin/audit', handler: (req) => adminController.getAdminAudit(req) },
+  { method: 'GET', path: '/api/admin/aws/services', handler: (req) => adminController.getAdminAwsServices(req) },
   { method: 'POST', path: '/api/admin/guard/start', handler: (req) => adminController.startAdminGuard(req) },
   { method: 'POST', path: '/api/admin/guard/verify', handler: (req) => adminController.verifyAdminGuard(req) },
 

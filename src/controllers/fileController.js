@@ -97,7 +97,7 @@ export async function getFileTree(request, projectIdentifier) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'view')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'view')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const files = await projectFilesRepo.listByProject(String(access.project.id));
   return jsonResponse(200, { success: true, files });
 }
@@ -107,7 +107,7 @@ export async function getFileContent(request, projectIdentifier, fileId) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'view')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'view')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const file = await projectFilesRepo.getById(String(fileId));
   if (!file || String(file.project_id) !== String(access.project.id)) return jsonResponse(404, { success: false, error: 'File not found' });
   if (file.type === 'folder') return jsonResponse(400, { success: false, error: 'Cannot get content of a folder' });
@@ -132,7 +132,7 @@ export async function createFile(request, projectIdentifier) {
   if (!rateLimit.allowed) return jsonResponse(429, { success: false, error: 'Rate limited' }, { 'retry-after': String(rateLimit.retryAfterSeconds) });
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
 
   const payload = parseJsonBody(request);
   if (!payload?.name || !payload?.type) return jsonResponse(400, { success: false, error: 'Name and type required' });
@@ -195,7 +195,7 @@ export async function updateFileContent(request, projectIdentifier, fileId) {
   if (!rateLimit.allowed) return jsonResponse(429, { success: false, error: 'Rate limited' }, { 'retry-after': String(rateLimit.retryAfterSeconds) });
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const payload = parseJsonBody(request);
   if (!payload || payload.content === undefined) return jsonResponse(400, { success: false, error: 'Content required' });
   const file = await projectFilesRepo.getById(String(fileId));
@@ -222,7 +222,7 @@ export async function renameFile(request, projectIdentifier, fileId) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const payload = parseJsonBody(request);
   if (!payload?.name) return jsonResponse(400, { success: false, error: 'Name required' });
   const file = await projectFilesRepo.getById(String(fileId));
@@ -246,7 +246,7 @@ export async function moveFile(request, projectIdentifier, fileId) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const payload = parseJsonBody(request) || {};
   const file = await projectFilesRepo.getById(String(fileId));
   if (!file || String(file.project_id) !== String(access.project.id)) return jsonResponse(404, { success: false, error: 'File not found' });
@@ -275,7 +275,7 @@ export async function deleteFile(request, projectIdentifier, fileId) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const file = await projectFilesRepo.getById(String(fileId));
   if (!file || String(file.project_id) !== String(access.project.id)) return jsonResponse(404, { success: false, error: 'File not found' });
 
@@ -301,7 +301,7 @@ export async function uploadFile(request, projectIdentifier) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const payload = parseJsonBody(request);
   if (!payload?.files || !Array.isArray(payload.files)) return jsonResponse(400, { success: false, error: 'Files array required' });
   const parentId = normalizeParentId(payload.parent_id);
@@ -343,7 +343,7 @@ export async function searchFiles(request, projectIdentifier) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'view')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'view')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const payload = parseJsonBody(request);
   if (!payload?.query) return jsonResponse(400, { success: false, error: 'Query required' });
 
@@ -383,7 +383,7 @@ export async function copyFile(request, projectIdentifier, fileId) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const file = await projectFilesRepo.getById(String(fileId));
   if (!file || String(file.project_id) !== String(access.project.id)) return jsonResponse(404, { success: false, error: 'File not found' });
   const payload = parseJsonBody(request) || {};
@@ -445,7 +445,7 @@ export async function setEntryPoint(request, projectIdentifier, fileId) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const target = await projectFilesRepo.getById(String(fileId));
   if (!target || String(target.project_id) !== String(access.project.id) || target.type === 'folder') return jsonResponse(404, { success: false, error: 'File not found' });
   for (const file of await projectFilesRepo.listByProject(String(access.project.id))) {
@@ -465,7 +465,7 @@ export async function batchOperation(request, projectIdentifier) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const payload = parseJsonBody(request);
   if (!payload?.action || !Array.isArray(payload.file_ids)) return jsonResponse(400, { success: false, error: 'Action and file_ids required' });
 
@@ -557,7 +557,7 @@ export async function generateBundle(request, projectIdentifier) {
   if (!userId) return unauthorized();
   const access = await getProjectAccess(projectIdentifier, userId);
   if (!access) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(access.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
 
   const allFiles = await projectFilesRepo.listByProject(String(access.project.id));
   const files = allFiles.filter((item) => item.type === 'file');
@@ -582,3 +582,4 @@ export async function generateBundle(request, projectIdentifier) {
       : generatePyBundle(fileContents, entryPath);
   return jsonResponse(200, { success: true, bundle, entry: entryPath, file_count: files.length });
 }
+

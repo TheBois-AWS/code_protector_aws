@@ -12,7 +12,7 @@ export async function listAccessRules(request, workspaceIdentifier) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'view')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'view')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
   return jsonResponse(200, { success: true, items: await listWorkspaceAccessRules(workspace.id) });
 }
 
@@ -26,7 +26,7 @@ export async function createAccessRule(request, workspaceIdentifier) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'manage_access')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'manage_access')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
 
   const rule = await accessListsRepo.create({
     id: randomId(),
@@ -48,10 +48,11 @@ export async function deleteAccessRule(request, ruleId) {
   if (!rule) return jsonResponse(404, { success: false, error: 'Rule not found' });
 
   const access = await getWorkspaceAccess(rule.workspace_id, userId);
-  if (!access || !hasPermission(access.role, 'manage_access')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'manage_access')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
 
   await accessListsRepo.delete(String(rule.id));
   await logAction(rule.workspace_id, 'DELETE_ACCESS_RULE', `Deleted access rule [${rule.type}] ${rule.identifier}`, request);
   await broadcastWorkspaceEvent(rule.workspace_id, 'ACCESS_UPDATE', { action: 'delete', id: String(rule.id) });
   return jsonResponse(200, { success: true });
 }
+

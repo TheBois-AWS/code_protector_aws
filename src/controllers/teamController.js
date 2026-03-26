@@ -12,7 +12,7 @@ export async function listTeamMembers(request, workspaceIdentifier) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
 
   const owner = await usersRepo.getById(String(workspace.user_id));
   const members = [];
@@ -49,7 +49,7 @@ export async function inviteTeamMember(request, workspaceIdentifier) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'manage_team')) return jsonResponse(403, { success: false, error: 'Permission denied' });
+  if (!access || !hasPermission(access.role, 'manage_team')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
   if (access.role !== 'owner' && ROLE_HIERARCHY[role] >= ROLE_HIERARCHY[access.role]) {
     return jsonResponse(403, { success: false, error: 'Cannot invite with equal or higher role' });
   }
@@ -108,7 +108,7 @@ export async function updateTeamMember(request, workspaceIdentifier, memberId) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'manage_team')) return jsonResponse(403, { success: false, error: 'Permission denied' });
+  if (!access || !hasPermission(access.role, 'manage_team')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
 
   const member = await workspaceMembersRepo.getById(String(memberId));
   if (!member || String(member.workspace_id) !== String(workspace.id)) return jsonResponse(404, { success: false, error: 'Member not found' });
@@ -129,7 +129,7 @@ export async function removeTeamMember(request, workspaceIdentifier, memberId) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
 
   const member = await workspaceMembersRepo.getById(String(memberId));
   if (!member || String(member.workspace_id) !== String(workspace.id)) return jsonResponse(404, { success: false, error: 'Member not found' });
@@ -139,7 +139,7 @@ export async function removeTeamMember(request, workspaceIdentifier, memberId) {
     await broadcastWorkspaceEvent(workspace.id, 'TEAM_UPDATE', { action: 'member_left', user_id: String(userId) });
     return jsonResponse(200, { success: true, left: true });
   }
-  if (!hasPermission(access.role, 'manage_team')) return jsonResponse(403, { success: false, error: 'Permission denied' });
+  if (!hasPermission(access.role, 'manage_team')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
   if (access.role !== 'owner' && ROLE_HIERARCHY[member.role] >= ROLE_HIERARCHY[access.role]) return jsonResponse(403, { success: false, error: 'Cannot remove this member' });
   await workspaceMembersRepo.delete(String(member.id));
   await logAction(workspace.id, 'TEAM_MEMBER_REMOVED', `Removed member ${member.id}`, request);
@@ -153,7 +153,7 @@ export async function cancelInvitation(request, workspaceIdentifier, inviteId) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'manage_team')) return jsonResponse(403, { success: false, error: 'Permission denied' });
+  if (!access || !hasPermission(access.role, 'manage_team')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
   const invitation = await workspaceInvitationsRepo.getById(String(inviteId));
   if (!invitation || String(invitation.workspace_id) !== String(workspace.id)) return jsonResponse(404, { success: false, error: 'Invitation not found' });
   await workspaceInvitationsRepo.delete(String(invitation.id));
@@ -219,3 +219,4 @@ export async function acceptInvitation(request, token) {
     role: invitation.role
   });
 }
+

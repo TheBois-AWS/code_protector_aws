@@ -171,6 +171,7 @@ Resources:
                   - dynamodb:DeleteItem
                   - dynamodb:Query
                   - dynamodb:Scan
+                  - dynamodb:DescribeTable
                 Resource:
                   - !GetAtt UsersTable.Arn
                   - !GetAtt WorkspacesTable.Arn
@@ -210,9 +211,32 @@ Resources:
                   - !Sub '${FrontendBucket.Arn}/*'
               - Effect: Allow
                 Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:GetBucketVersioning
+                  - s3:GetEncryptionConfiguration
+                Resource:
+                  - !GetAtt ContentBucket.Arn
+                  - !GetAtt FrontendBucket.Arn
+              - Effect: Allow
+                Action:
                   - s3:PutObject
                   - s3:DeleteObject
                 Resource: !Sub '${ContentBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunctionConfiguration
+                Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${Stage}-api'
+              - Effect: Allow
+                Action:
+                  - cloudfront:GetDistribution
+                  - cloudfront:ListDistributions
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarms
+                  - logs:DescribeLogGroups
+                Resource: '*'
 
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -229,6 +253,9 @@ Resources:
       Environment:
         Variables:
           APP_NAME: code_protector_aws
+          APP_STAGE: !Ref Stage
+          PROJECT_NAME: !Ref ProjectName
+          API_FUNCTION_NAME: !Sub '${ProjectName}-${Stage}-api'
           ALLOWED_ORIGINS: !Join [',', !Ref AllowedOrigins]
           CONTENT_BUCKET: !Ref ContentBucket
           APP_ASSETS_BUCKET: !Ref FrontendBucket
@@ -463,10 +490,51 @@ Resources:
       FunctionCode: |
         function handler(event) {
           var request = event.request;
-          var uri = request.uri || '/';
+          var rawUri = request.uri || '/';
+          var uri = rawUri;
+          if (uri.length > 1 && uri.charCodeAt(uri.length - 1) === 47) {
+            uri = uri.slice(0, -1);
+          }
+          var hasExtension = uri.lastIndexOf('.') !== -1;
+          var protectedRoute = (
+            uri === '/dashboard' ||
+            uri === '/admin' ||
+            uri.indexOf('/workspace') === 0 ||
+            uri.indexOf('/admin/') === 0
+          );
 
           if (uri.indexOf('/api/') === 0 || uri.indexOf('/files/') === 0) {
             return request;
+          }
+
+          if (!hasExtension && protectedRoute) {
+            var cookieHeader = request.headers && request.headers.cookie ? request.headers.cookie.value : '';
+            var hasToken = /(^|;\s*)token=/.test(cookieHeader || '');
+            if (!hasToken) {
+              var returnTo = uri;
+              if (rawUri && rawUri !== uri) {
+                returnTo = rawUri;
+              }
+              if (request.querystring) {
+                var queryParts = [];
+                for (var q in request.querystring) {
+                  if (!Object.prototype.hasOwnProperty.call(request.querystring, q)) continue;
+                  var value = request.querystring[q] && request.querystring[q].value ? request.querystring[q].value : '';
+                  queryParts.push(encodeURIComponent(q) + '=' + encodeURIComponent(value));
+                }
+                if (queryParts.length) {
+                  returnTo += '?' + queryParts.join('&');
+                }
+              }
+              return {
+                statusCode: 302,
+                statusDescription: 'Found',
+                headers: {
+                  location: { value: '/login?returnTo=' + encodeURIComponent(returnTo) },
+                  'cache-control': { value: 'no-store, max-age=0' }
+                }
+              };
+            }
           }
 
           if (uri === '/' || uri === '') {
@@ -474,18 +542,18 @@ Resources:
             return request;
           }
 
-          if (uri === '/login' || uri === '/register' || uri === '/dashboard' || uri === '/admin') {
+          if (uri === '/login' || uri === '/register' || uri === '/dashboard' || uri === '/admin' || uri === '/404') {
             request.uri = uri + '/index.html';
             return request;
           }
 
-          if (uri.indexOf('/workspace') === 0 && uri.lastIndexOf('.') === -1) {
+          if (uri.indexOf('/workspace') === 0 && !hasExtension) {
             request.uri = '/workspace/index.html';
             return request;
           }
 
-          if (uri.lastIndexOf('.') === -1) {
-            request.uri = uri.replace(/\/$/, '') + '/index.html';
+          if (!hasExtension) {
+            request.uri = '/404/index.html';
           }
 
           return request;

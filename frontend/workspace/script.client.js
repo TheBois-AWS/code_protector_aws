@@ -334,6 +334,10 @@ function redirectToLoginWithReturnTo(returnToPath = getCurrentReturnToPath()) {
     window.location.replace(`/login?returnTo=${encodeURIComponent(safeReturnTo)}`);
 }
 
+function redirectToNotFound() {
+    window.location.replace('/404');
+}
+
 if (!token) redirectToLoginWithReturnTo();
 
 // Valid views for URL routing
@@ -1096,15 +1100,26 @@ async function loadWorkspaceData() {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}`, { headers });
 
         // Handle expired/invalid token
-        if (res.status === 401 || res.status === 403) {
+        if (res.status === 401) {
             handleAuthError();
+            return;
+        }
+        if (res.status === 403 || res.status === 404) {
+            redirectToNotFound();
             return;
         }
 
         const data = await res.json();
         console.log('[loadWorkspaceData] response:', { success: data.success, requirePin: data.requirePin, projectsCount: data.projects?.length });
 
-        if (!data.success) throw new Error(data.error);
+        if (!data.success) {
+            const message = String(data.error || '').toLowerCase();
+            if (message.includes('not found') || message.includes('access denied')) {
+                redirectToNotFound();
+                return;
+            }
+            throw new Error(data.error);
+        }
 
         workspaceData = data.workspace;
         currentUserRole = data.userRole || currentUserRole || 'viewer';
@@ -1117,6 +1132,7 @@ async function loadWorkspaceData() {
             disconnectWorkspaceWebSocket({ allowReconnect: false });
             projects = []; // Don't load scripts until PIN verified
             renderFileList(); // Clear the file list UI
+            document.documentElement.classList.remove('auth-pending');
             showPinVerifyModal();
             return; // Stop here, user needs to verify PIN
         }
@@ -1126,6 +1142,7 @@ async function loadWorkspaceData() {
 
         // Hide PIN modal if it was showing
         document.getElementById('pinVerifyModal').style.display = 'none';
+        document.documentElement.classList.remove('auth-pending');
         connectWorkspaceWebSocket();
 
         projects = data.projects;
@@ -1155,6 +1172,7 @@ async function loadWorkspaceData() {
         // Don't override initial view from URL - it's set in Monaco init callback
     } catch (e) {
         disconnectWorkspaceWebSocket({ allowReconnect: false });
+        document.documentElement.classList.remove('auth-pending');
         showAlert('Error', 'Error loading workspace: ' + e.message);
         window.location.href = '/dashboard';
     } finally {

@@ -233,7 +233,7 @@ export async function updateWorkspaceSettings(request, identifier) {
   const workspace = await resolveWorkspace(identifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const systemAdmin = await isSystemAdminByUserId(userId);
-  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(404, { success: false, error: 'Workspace not found' });
 
   let defaultProjectId = workspace.default_project_id || null;
   if (payload.default_project_id !== undefined || payload.default_script_id !== undefined) {
@@ -269,7 +269,7 @@ export async function deleteWorkspace(request, identifier) {
   const workspace = await resolveWorkspace(identifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const systemAdmin = await isSystemAdminByUserId(userId);
-  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(404, { success: false, error: 'Workspace not found' });
 
   await destroyWorkspaceData(String(workspace.id));
   await broadcastUserEvent(userId, 'WORKSPACE_UPDATE', {
@@ -285,7 +285,7 @@ export async function getWorkspaceLogs(request, identifier) {
   const workspace = await resolveWorkspace(identifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'view_logs')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'view_logs')) return jsonResponse(404, { success: false, error: 'Workspace not found' });
 
   const logs = (await listWorkspaceLogs(workspace.id)).slice(0, 100);
   return jsonResponse(200, { success: true, logs });
@@ -298,7 +298,7 @@ export async function clearWorkspaceLogs(request, identifier) {
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
   if (!access || !(access.isOwner || access.role === 'admin' || access.role === 'editor')) {
-    return jsonResponse(403, { success: false, error: 'Access denied' });
+    return jsonResponse(404, { success: false, error: 'Workspace not found' });
   }
 
   for (const item of await logsRepo.listByWorkspace(String(workspace.id))) {
@@ -315,7 +315,7 @@ export async function setWorkspacePin(request, identifier) {
   const workspace = await resolveWorkspace(identifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const systemAdmin = await isSystemAdminByUserId(userId);
-  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Only workspace owner can set PIN' });
+  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(404, { success: false, error: 'Workspace not found' });
 
   const payload = parseJsonBody(request);
   if (!payload || !/^\d{6}$/.test(String(payload.pin || ''))) return jsonResponse(400, { success: false, error: 'PIN must be exactly 6 digits' });
@@ -334,7 +334,7 @@ export async function verifyWorkspacePin(request, identifier) {
   const workspace = await resolveWorkspace(identifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access) return jsonResponse(404, { success: false, error: 'Workspace not found' });
 
   const rateLimit = await checkRateLimit(buildRateLimitKey('pin_verify', request, String(workspace.id)), 60, 5);
   if (!rateLimit.allowed) return jsonResponse(429, { success: false, error: 'Too many PIN attempts. Try again later.' }, { 'retry-after': String(rateLimit.retryAfterSeconds) });
@@ -366,7 +366,7 @@ export async function removeWorkspacePin(request, identifier) {
   const workspace = await resolveWorkspace(identifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const systemAdmin = await isSystemAdminByUserId(userId);
-  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(403, { success: false, error: 'Only workspace owner can remove PIN' });
+  if (!systemAdmin && String(workspace.user_id) !== String(userId)) return jsonResponse(404, { success: false, error: 'Workspace not found' });
 
   await workspacesRepo.update(String(workspace.id), { pin_hash: null, pin_enabled: 0 });
   for (const pin of await pinVerificationsRepo.listByWorkspace(String(workspace.id))) {

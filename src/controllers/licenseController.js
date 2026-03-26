@@ -25,7 +25,7 @@ export async function listLicenses(request, workspaceIdentifier) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'view')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'view')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
   return jsonResponse(200, { success: true, licenses: sortByDateDesc(await licensesRepo.listByWorkspace(String(workspace.id))) });
 }
 
@@ -41,7 +41,7 @@ export async function createLicense(request, workspaceIdentifier) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
 
   const projectId = await resolveProjectId(workspace.id, payload.script_id || payload.project_id);
   if ((payload.script_id || payload.project_id) && !projectId) return jsonResponse(400, { success: false, error: 'Invalid project ID' });
@@ -86,7 +86,7 @@ export async function batchCreateLicenses(request, workspaceIdentifier) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
 
   const count = Math.min(Math.max(Number(payload.count || 1), 1), 100);
   const projectId = await resolveProjectId(workspace.id, payload.script_id || payload.project_id);
@@ -126,7 +126,7 @@ export async function exportLicenses(request, workspaceIdentifier) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'view')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'view')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
 
   const headers = ['License Key', 'Note', 'Active', 'Expiration', 'HWID', 'OS', 'Usage Count', 'Last Used', 'Created'];
   const rows = sortByDateDesc(await licensesRepo.listByWorkspace(String(workspace.id))).map((item) => [
@@ -157,7 +157,7 @@ export async function deleteLicense(request, licenseId) {
   const license = await licensesRepo.getById(String(licenseId));
   if (!license) return jsonResponse(404, { success: false, error: 'License not found' });
   const access = await getWorkspaceAccess(license.workspace_id, userId);
-  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
   await licensesRepo.delete(String(license.id));
   await broadcastWorkspaceEvent(license.workspace_id, 'LICENSE_UPDATE', { action: 'delete', id: String(license.id) });
   return jsonResponse(200, { success: true });
@@ -169,7 +169,7 @@ export async function toggleLicenseStatus(request, licenseId) {
   const license = await licensesRepo.getById(String(licenseId));
   if (!license) return jsonResponse(404, { success: false, error: 'License not found' });
   const access = await getWorkspaceAccess(license.workspace_id, userId);
-  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
   const updated = await licensesRepo.update(String(license.id), { is_active: Number(license.is_active) ? 0 : 1 });
   await logAction(license.workspace_id, 'TOGGLE_LICENSE', `${license.key} -> ${updated.is_active ? 'active' : 'inactive'}`, request);
   await broadcastWorkspaceEvent(license.workspace_id, 'LICENSE_UPDATE', { action: 'toggle', id: String(license.id), is_active: Number(updated.is_active) });
@@ -182,7 +182,7 @@ export async function toggleHwidLock(request, licenseId) {
   const license = await licensesRepo.getById(String(licenseId));
   if (!license) return jsonResponse(404, { success: false, error: 'License not found' });
   const access = await getWorkspaceAccess(license.workspace_id, userId);
-  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
   const updated = await licensesRepo.update(String(license.id), { hwid_lock: Number(license.hwid_lock) ? 0 : 1 });
   await broadcastWorkspaceEvent(license.workspace_id, 'LICENSE_UPDATE', { action: 'toggle_hwid_lock', id: String(license.id), hwid_lock: Number(updated.hwid_lock) });
   return jsonResponse(200, { success: true, hwid_lock: updated.hwid_lock });
@@ -194,8 +194,9 @@ export async function resetHwid(request, licenseId) {
   const license = await licensesRepo.getById(String(licenseId));
   if (!license) return jsonResponse(404, { success: false, error: 'License not found' });
   const access = await getWorkspaceAccess(license.workspace_id, userId);
-  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'manage_licenses')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
   await licensesRepo.update(String(license.id), { activated_hwid: null, activated_os: null });
   await broadcastWorkspaceEvent(license.workspace_id, 'LICENSE_UPDATE', { action: 'reset_hwid', id: String(license.id) });
   return jsonResponse(200, { success: true });
 }
+

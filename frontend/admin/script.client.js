@@ -4,6 +4,7 @@ const adminState = {
   profile: window.__ADMIN_PROFILE__ || null,
   token: window.__ADMIN_TOKEN__ || localStorage.getItem('token') || '',
   overview: null,
+  aws: null,
   users: [],
   workspaces: [],
   audit: [],
@@ -16,7 +17,7 @@ const adminState = {
   wsShouldReconnect: true,
   wsReconnectDelay: 2000,
   fetchWrapped: false,
-  charts: { activity: null, status: null },
+  charts: { activity: null, status: null, awsServices: null },
   guard: {
     open: false,
     phase: 'confirm',
@@ -161,6 +162,13 @@ function statusTone(status) {
   if (normalized === 'active') return 'success';
   if (normalized === 'suspended' || normalized === 'deleted' || normalized === 'disabled') return 'danger';
   return '';
+}
+
+function serviceTone(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'healthy' || normalized === 'active' || normalized === 'ok') return 'success';
+  if (normalized === 'degraded' || normalized === 'warning') return '';
+  return 'danger';
 }
 
 function setText(id, value) {
@@ -467,6 +475,200 @@ async function loadOverview({ force = false } = {}) {
     return null;
   }
 }
+
+function renderAwsServiceChart(summary = {}) {
+  const canvas = document.getElementById('awsServiceChart');
+  if (!canvas || typeof Chart === 'undefined') return;
+  if (adminState.charts.awsServices) adminState.charts.awsServices.destroy();
+  adminState.charts.awsServices = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      labels: ['Healthy', 'Degraded', 'Unavailable'],
+      datasets: [{
+        data: [
+          safeNumber(summary.healthy_services || 0),
+          safeNumber(summary.degraded_services || 0),
+          safeNumber(summary.unavailable_services || 0)
+        ],
+        backgroundColor: ['rgba(16, 185, 129, 0.85)', 'rgba(245, 158, 11, 0.85)', 'rgba(244, 63, 94, 0.85)'],
+        borderColor: 'rgba(15, 23, 42, 0.85)',
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '62%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { color: '#94a3b8', boxWidth: 12, usePointStyle: true }
+        }
+      }
+    }
+  });
+}
+
+function renderAwsTableWrap(target, html) {
+  if (!target) return;
+  target.innerHTML = html;
+}
+
+function renderAwsServicesPanel() {
+  const aws = adminState.aws || {};
+  const summary = aws.summary || {};
+  const services = aws.services || {};
+  setText('awsSummaryStatus', String(summary.overall_status || '-').toUpperCase());
+  setText('awsSummaryHealthy', safeNumber(summary.healthy_services || 0));
+  setText('awsSummaryDegraded', safeNumber(summary.degraded_services || 0));
+  setText('awsSummaryUnavailable', safeNumber(summary.unavailable_services || 0));
+  setText('awsRegion', `Region: ${aws.region || '-'}`);
+  setText('awsCheckedAt', `Checked: ${formatDateTime(aws.checked_at)}`);
+  renderAwsServiceChart(summary);
+
+  const cards = document.getElementById('awsServiceCards');
+  if (cards) {
+    const cardRows = Object.values(services).filter(Boolean);
+    if (!cardRows.length) renderEmpty(cards, 'No service checks yet', 'Refresh the panel to run AWS service checks.');
+    else {
+      cards.innerHTML = cardRows.map((service) => `
+        <div class="summary-card">
+          <div class="flex items-center justify-between gap-2">
+            <div class="font-semibold text-white">${escapeHtml(String(service.service || '').toUpperCase())}</div>
+            ${badgeHtml(String(service.status || 'unknown').toUpperCase(), serviceTone(service.status))}
+          </div>
+          <div class="text-xs text-gray-400 mt-1 break-all">${escapeHtml(service.error || service.message || '')}</div>
+        </div>
+      `).join('');
+    }
+  }
+
+  const lambdaDetails = document.getElementById('awsLambdaDetails');
+  if (lambdaDetails) {
+    const lambda = services.lambda || {};
+    lambdaDetails.innerHTML = `
+      <div><span class="text-gray-500">Function</span>: <span class="font-mono">${escapeHtml(lambda.function_name || '-')}</span></div>
+      <div><span class="text-gray-500">Runtime</span>: ${escapeHtml(lambda.runtime || '-')}</div>
+      <div><span class="text-gray-500">Memory/Timeout</span>: ${escapeHtml(`${safeNumber(lambda.memory_size, 0)}MB / ${safeNumber(lambda.timeout_seconds, 0)}s`)}</div>
+      <div><span class="text-gray-500">State</span>: ${escapeHtml(lambda.state || lambda.status || '-')} (${escapeHtml(lambda.last_update_status || '-')})</div>
+      <div><span class="text-gray-500">Last Modified</span>: ${escapeHtml(formatDateTime(lambda.last_modified))}</div>
+      ${lambda.error ? `<div class="text-rose-300">${escapeHtml(lambda.error)}</div>` : ''}
+    `;
+  }
+
+  const cloudFrontDetails = document.getElementById('awsCloudFrontDetails');
+  if (cloudFrontDetails) {
+    const cloudfront = services.cloudfront || {};
+    cloudFrontDetails.innerHTML = `
+      <div><span class="text-gray-500">Distribution ID</span>: <span class="font-mono">${escapeHtml(cloudfront.distribution_id || '-')}</span></div>
+      <div><span class="text-gray-500">Domain</span>: ${escapeHtml(cloudfront.domain_name || '-')}</div>
+      <div><span class="text-gray-500">Deployment</span>: ${escapeHtml(cloudfront.deployment_status || cloudfront.status || '-')}</div>
+      <div><span class="text-gray-500">Probe</span>: ${escapeHtml(cloudfront.health_probe?.message || '-')}</div>
+      ${cloudfront.error ? `<div class="text-rose-300">${escapeHtml(cloudfront.error)}</div>` : ''}
+    `;
+  }
+
+  const cloudWatchDetails = document.getElementById('awsCloudWatchDetails');
+  if (cloudWatchDetails) {
+    const cloudwatch = services.cloudwatch || {};
+    cloudWatchDetails.innerHTML = `
+      <div><span class="text-gray-500">Log Group</span>: <span class="font-mono">${escapeHtml(cloudwatch.log_group?.name || '-')}</span></div>
+      <div><span class="text-gray-500">Retention</span>: ${escapeHtml(cloudwatch.log_group?.retention_days ? `${cloudwatch.log_group.retention_days} days` : '-')}</div>
+      <div><span class="text-gray-500">Stored Bytes</span>: ${escapeHtml(String(safeNumber(cloudwatch.log_group?.stored_bytes || 0)))}</div>
+      <div><span class="text-gray-500">Active alarms</span>: ${escapeHtml(String(safeNumber(cloudwatch.active_alarm_count || 0)))}</div>
+      ${(cloudwatch.errors || []).map((err) => `<div class="text-rose-300">${escapeHtml(err)}</div>`).join('')}
+    `;
+  }
+
+  const alarmsContainer = document.getElementById('awsCloudWatchAlarms');
+  if (alarmsContainer) {
+    const alarms = (services.cloudwatch?.alarms || []);
+    if (!alarms.length) renderEmpty(alarmsContainer, 'No alarms returned', 'No CloudWatch alarms matched the current project prefix.');
+    else {
+      alarmsContainer.innerHTML = alarms.slice(0, 12).map((alarm) => `
+        <div class="summary-card">
+          <div class="flex items-center justify-between gap-2">
+            <div class="font-semibold text-white break-all">${escapeHtml(alarm.name || '-')}</div>
+            ${badgeHtml(String(alarm.state || 'unknown').toUpperCase(), serviceTone(String(alarm.state || '').toLowerCase() === 'alarm' ? 'degraded' : 'healthy'))}
+          </div>
+          <div class="text-xs text-gray-400 mt-1">${escapeHtml(alarm.reason || '')}</div>
+        </div>
+      `).join('');
+    }
+  }
+
+  const dynamoWrap = document.getElementById('awsDynamoTableWrap');
+  const dynamodb = services.dynamodb || {};
+  const dynamoTables = Array.isArray(dynamodb.tables) ? dynamodb.tables : [];
+  if (!dynamoTables.length) renderEmpty(dynamoWrap, 'No DynamoDB tables', 'No table diagnostics were returned by the API.');
+  else {
+    renderAwsTableWrap(dynamoWrap, `
+      <table class="admin-table">
+        <thead><tr><th>Table</th><th>Status</th><th>Items</th><th>GSI</th><th>Billing</th><th>Error</th></tr></thead>
+        <tbody>
+          ${dynamoTables.map((table) => `
+            <tr>
+              <td class="text-sm text-gray-300 font-mono break-all">${escapeHtml(table.name || '-')}</td>
+              <td>${badgeHtml(table.status || '-', serviceTone(table.healthy ? 'healthy' : 'degraded'))}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(String(safeNumber(table.item_count || 0)))}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(String(safeNumber(table.gsi_count || 0)))}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(table.billing_mode || '-')}</td>
+              <td class="text-xs text-rose-300">${escapeHtml(table.error || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `);
+  }
+
+  const s3Wrap = document.getElementById('awsS3TableWrap');
+  const s3Status = services.s3 || {};
+  const buckets = Array.isArray(s3Status.buckets) ? s3Status.buckets : [];
+  if (!buckets.length) renderEmpty(s3Wrap, 'No S3 buckets', 'No bucket diagnostics were returned by the API.');
+  else {
+    renderAwsTableWrap(s3Wrap, `
+      <table class="admin-table">
+        <thead><tr><th>Bucket</th><th>Status</th><th>Region</th><th>Versioning</th><th>Encryption</th><th>Error</th></tr></thead>
+        <tbody>
+          ${buckets.map((bucket) => `
+            <tr>
+              <td class="text-sm text-gray-300 font-mono break-all">${escapeHtml(bucket.name || '-')}</td>
+              <td>${badgeHtml(bucket.status || '-', serviceTone(bucket.healthy ? 'healthy' : 'degraded'))}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(bucket.region || '-')}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(bucket.versioning || '-')}</td>
+              <td class="text-sm text-gray-300">${escapeHtml(bucket.encryption || '-')}</td>
+              <td class="text-xs text-rose-300">${escapeHtml(bucket.error || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `);
+  }
+
+  lucide.createIcons();
+}
+
+async function loadAwsStatus({ force = false } = {}) {
+  if (adminState.aws && !force) {
+    renderAwsServicesPanel();
+    return adminState.aws;
+  }
+  const cards = document.getElementById('awsServiceCards');
+  if (cards) renderEmpty(cards, 'Checking AWS services...', 'Collecting diagnostics from backend checks.');
+  try {
+    const response = await apiFetch('/api/admin/aws/services');
+    const data = await readResponse(response);
+    if (!response.ok || data.success === false) throw new Error(data.error || `Failed to load AWS services (${response.status})`);
+    adminState.aws = data.aws || data.data || {};
+    renderAwsServicesPanel();
+    return adminState.aws;
+  } catch (error) {
+    showToast('AWS Services', error.message, 'error');
+    if (cards) renderEmpty(cards, 'Unable to load AWS checks', error.message);
+    return null;
+  }
+}
+
 function userFilterMatches(item) {
   const search = document.getElementById('userSearch')?.value?.trim().toLowerCase() || '';
   const statusFilter = document.getElementById('userStatusFilter')?.value || 'all';
@@ -965,6 +1167,7 @@ async function handleWorkspaceAction(button) {
 
 function loadPanel(panelId, { force = false } = {}) {
   if (panelId === 'overview') return loadOverview({ force });
+  if (panelId === 'aws') return loadAwsStatus({ force });
   if (panelId === 'users') return loadUsers({ force });
   if (panelId === 'workspaces') return loadWorkspaces({ force });
   if (panelId === 'audit') return loadAudit({ force });
@@ -977,7 +1180,7 @@ function loadPanel(panelId, { force = false } = {}) {
 
 async function refreshAll() {
   showToast('Refreshing', 'Syncing admin data...', 'info');
-  await Promise.allSettled([loadOverview({ force: true }), loadUsers({ force: true }), loadWorkspaces({ force: true }), loadAudit({ force: true })]);
+  await Promise.allSettled([loadOverview({ force: true }), loadAwsStatus({ force: true }), loadUsers({ force: true }), loadWorkspaces({ force: true }), loadAudit({ force: true })]);
   filterAndRenderEntityTargets();
   showToast('Done', 'Admin data refreshed.', 'success');
 }
@@ -1069,7 +1272,7 @@ async function bootstrapAdmin() {
   if (isCollapsed) document.querySelector('.sidebar')?.classList.add('collapsed');
   bindEvents();
   setPanelActive('overview');
-  await Promise.allSettled([loadOverview({ force: true }), loadUsers({ force: true }), loadWorkspaces({ force: true }), loadAudit({ force: true })]);
+  await Promise.allSettled([loadOverview({ force: true }), loadAwsStatus({ force: true }), loadUsers({ force: true }), loadWorkspaces({ force: true }), loadAudit({ force: true })]);
   filterAndRenderEntityTargets();
   connectAdminWebSocket();
   lucide.createIcons();

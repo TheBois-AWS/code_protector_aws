@@ -8,17 +8,15 @@
   },
   "scripts": {
     "start": "node src/local.js",
-    "dev": "node --watch src/local.js",
-    "docs:mock-api": "node scripts/docs/mock-api-server.mjs",
-    "docs:host": "node scripts/docs/docs-host.mjs",
-    "docs:capture": "node scripts/docs/capture-docs.mjs",
-    "docs:validate-openapi": "node scripts/docs/validate-openapi.mjs",
-    "docs:check-parity": "node scripts/docs/check-openapi-parity.mjs",
-    "docs:check": "npm run docs:validate-openapi && npm run docs:check-parity"
+    "dev": "node --watch src/local.js"
   },
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3.1016.0",
+    "@aws-sdk/client-cloudfront": "^3.1016.0",
+    "@aws-sdk/client-cloudwatch": "^3.1016.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.1016.0",
     "@aws-sdk/client-dynamodb": "^3.888.0",
+    "@aws-sdk/client-lambda": "^3.1016.0",
     "@aws-sdk/client-s3": "^3.888.0",
     "@aws-sdk/lib-dynamodb": "^3.888.0"
   },

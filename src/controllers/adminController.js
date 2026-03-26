@@ -4,6 +4,14 @@ import { adminAuditRepo, accessListsRepo, appConfigRepo, licensesRepo, logsRepo,
 import { nowIso, randomId, sortByDateDesc } from '../utils/common.js';
 import { broadcastAdminEvent } from '../utils/realtime.js';
 import { destroyWorkspaceData } from './workspaceController.js';
+import { config } from '../config.js';
+import { cloudFrontClient, cloudWatchClient, cloudWatchLogsClient, ddbClient, lambdaClient, s3 } from '../services/aws.js';
+import { DescribeTableCommand } from '@aws-sdk/client-dynamodb';
+import { GetBucketEncryptionCommand, GetBucketLocationCommand, GetBucketVersioningCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
+import { GetFunctionConfigurationCommand } from '@aws-sdk/client-lambda';
+import { GetDistributionCommand, ListDistributionsCommand } from '@aws-sdk/client-cloudfront';
+import { DescribeAlarmsCommand } from '@aws-sdk/client-cloudwatch';
+import { DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
 
 const GUARD_CHALLENGE_PREFIX = 'admin_guard_challenge:';
 const GUARD_TOKEN_PREFIX = 'admin_guard_token:';
@@ -298,6 +306,297 @@ async function hydrateWorkspaceDetails(workspace) {
   };
 }
 
+function formatAwsError(error) {
+  if (!error) return 'Unknown error';
+  const code = normalizeText(error.name || error.code);
+  const message = normalizeText(error.message);
+  if (!code && !message) return 'Unknown error';
+  return [code, message].filter(Boolean).join(': ');
+}
+
+function uniqueStrings(values) {
+  return [...new Set((values || []).map((value) => normalizeText(value)).filter(Boolean))];
+}
+
+async function probeUrl(url, timeoutMs = 4000) {
+  if (!url) return { ok: false, status: 0, message: 'URL not configured' };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { method: 'GET', cache: 'no-store', signal: controller.signal });
+    clearTimeout(timer);
+    return {
+      ok: response.ok,
+      status: response.status,
+      message: response.ok ? 'Reachable' : `HTTP ${response.status}`
+    };
+  } catch (error) {
+    clearTimeout(timer);
+    return { ok: false, status: 0, message: formatAwsError(error) };
+  }
+}
+
+async function inspectDynamoDbTables() {
+  const tableNames = uniqueStrings(Object.values(config.tables || {}));
+  const tables = await Promise.all(tableNames.map(async (tableName) => {
+    try {
+      const result = await ddbClient.send(new DescribeTableCommand({ TableName: tableName }));
+      const table = result?.Table || {};
+      return {
+        name: tableName,
+        status: normalizeText(table.TableStatus || 'UNKNOWN'),
+        item_count: Number(table.ItemCount || 0),
+        size_bytes: Number(table.TableSizeBytes || 0),
+        billing_mode: normalizeText(table.BillingModeSummary?.BillingMode || 'PAY_PER_REQUEST'),
+        gsi_count: Array.isArray(table.GlobalSecondaryIndexes) ? table.GlobalSecondaryIndexes.length : 0,
+        arn: normalizeText(table.TableArn),
+        healthy: normalizeLower(table.TableStatus) === 'active'
+      };
+    } catch (error) {
+      return {
+        name: tableName,
+        status: 'ERROR',
+        error: formatAwsError(error),
+        healthy: false
+      };
+    }
+  }));
+  const healthyCount = tables.filter((table) => table.healthy).length;
+  return {
+    service: 'dynamodb',
+    status: healthyCount === tables.length ? 'healthy' : (healthyCount ? 'degraded' : 'unavailable'),
+    summary: {
+      total_tables: tables.length,
+      healthy_tables: healthyCount,
+      unhealthy_tables: tables.length - healthyCount
+    },
+    tables
+  };
+}
+
+async function inspectS3Buckets() {
+  const buckets = uniqueStrings([config.s3Bucket, config.assetsBucket]);
+  const items = await Promise.all(buckets.map(async (bucketName) => {
+    try {
+      await s3.send(new HeadBucketCommand({ Bucket: bucketName }));
+      const [location, versioning, encryption] = await Promise.allSettled([
+        s3.send(new GetBucketLocationCommand({ Bucket: bucketName })),
+        s3.send(new GetBucketVersioningCommand({ Bucket: bucketName })),
+        s3.send(new GetBucketEncryptionCommand({ Bucket: bucketName }))
+      ]);
+      const locationValue = location.status === 'fulfilled'
+        ? normalizeText(location.value?.LocationConstraint || 'us-east-1')
+        : '';
+      const versioningValue = versioning.status === 'fulfilled'
+        ? normalizeText(versioning.value?.Status || 'Disabled')
+        : 'Unknown';
+      const encryptionEnabled = encryption.status === 'fulfilled';
+      return {
+        name: bucketName,
+        status: 'ACTIVE',
+        region: locationValue || config.aws.region,
+        versioning: versioningValue,
+        encryption: encryptionEnabled ? 'Enabled' : 'Not configured',
+        healthy: true
+      };
+    } catch (error) {
+      return {
+        name: bucketName,
+        status: 'ERROR',
+        error: formatAwsError(error),
+        healthy: false
+      };
+    }
+  }));
+  const healthyCount = items.filter((bucket) => bucket.healthy).length;
+  return {
+    service: 's3',
+    status: healthyCount === items.length ? 'healthy' : (healthyCount ? 'degraded' : 'unavailable'),
+    summary: {
+      total_buckets: items.length,
+      healthy_buckets: healthyCount,
+      unhealthy_buckets: items.length - healthyCount
+    },
+    buckets: items
+  };
+}
+
+async function inspectLambdaService() {
+  const functionName = normalizeText(config.aws.functionName);
+  if (!functionName) {
+    return {
+      service: 'lambda',
+      status: 'unavailable',
+      error: 'AWS_LAMBDA_FUNCTION_NAME is not available in current runtime'
+    };
+  }
+  try {
+    const result = await lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
+    const state = normalizeText(result?.State || 'Unknown');
+    const lastUpdateStatus = normalizeText(result?.LastUpdateStatus || 'Unknown');
+    return {
+      service: 'lambda',
+      status: normalizeLower(state) === 'active' && normalizeLower(lastUpdateStatus) === 'successful' ? 'healthy' : 'degraded',
+      function_name: functionName,
+      runtime: normalizeText(result?.Runtime),
+      memory_size: Number(result?.MemorySize || 0),
+      timeout_seconds: Number(result?.Timeout || 0),
+      state,
+      last_update_status: lastUpdateStatus,
+      last_modified: normalizeText(result?.LastModified),
+      version: normalizeText(result?.Version)
+    };
+  } catch (error) {
+    return {
+      service: 'lambda',
+      status: 'unavailable',
+      function_name: functionName,
+      error: formatAwsError(error)
+    };
+  }
+}
+
+async function inspectCloudFrontService(requestHost = '') {
+  const configuredDistributionId = normalizeText(config.aws.cloudFrontDistributionId);
+  const configuredDomain = normalizeText(config.aws.cloudFrontDomainName || config.baseUrl).replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  const runtimeHost = normalizeText(requestHost).replace(/:\d+$/, '');
+  const expectedHost = configuredDomain || runtimeHost;
+
+  let distributionId = configuredDistributionId;
+  let lookupError = '';
+  let listedDistribution = null;
+  if (!distributionId && expectedHost) {
+    try {
+      const list = await cloudFrontClient.send(new ListDistributionsCommand({ MaxItems: '100' }));
+      const items = list?.DistributionList?.Items || [];
+      listedDistribution = items.find((item) => {
+        const aliases = item?.Aliases?.Items || [];
+        return normalizeLower(item?.DomainName) === normalizeLower(expectedHost)
+          || aliases.some((alias) => normalizeLower(alias) === normalizeLower(expectedHost));
+      }) || null;
+      distributionId = normalizeText(listedDistribution?.Id);
+    } catch (error) {
+      lookupError = formatAwsError(error);
+    }
+  }
+
+  const probeHost = expectedHost || normalizeText(listedDistribution?.DomainName);
+  const healthProbe = await probeUrl(probeHost ? `https://${probeHost}/api/health` : '');
+  if (!distributionId) {
+    return {
+      service: 'cloudfront',
+      status: healthProbe.ok ? 'degraded' : 'unavailable',
+      distribution_id: '',
+      domain_name: probeHost,
+      deployment_status: normalizeText(listedDistribution?.Status),
+      enabled: Boolean(listedDistribution?.Enabled),
+      health_probe: healthProbe,
+      error: lookupError || 'CloudFront distribution not resolved for current host'
+    };
+  }
+
+  try {
+    const result = await cloudFrontClient.send(new GetDistributionCommand({ Id: distributionId }));
+    const distribution = result?.Distribution || {};
+    const configData = distribution.DistributionConfig || {};
+    const deployed = normalizeLower(distribution.Status) === 'deployed';
+    const enabled = Boolean(configData.Enabled);
+    return {
+      service: 'cloudfront',
+      status: deployed && enabled && healthProbe.ok ? 'healthy' : 'degraded',
+      distribution_id: distributionId,
+      domain_name: normalizeText(distribution.DomainName || probeHost),
+      deployment_status: normalizeText(distribution.Status),
+      enabled,
+      in_progress_invalidations: Number(distribution.InProgressInvalidationBatches || 0),
+      last_modified: distribution.LastModifiedTime ? new Date(distribution.LastModifiedTime).toISOString() : null,
+      health_probe: healthProbe
+    };
+  } catch (error) {
+    return {
+      service: 'cloudfront',
+      status: healthProbe.ok ? 'degraded' : 'unavailable',
+      distribution_id: distributionId,
+      domain_name: probeHost,
+      health_probe: healthProbe,
+      error: formatAwsError(error)
+    };
+  }
+}
+
+async function inspectCloudWatchService() {
+  const functionName = normalizeText(config.aws.functionName);
+  const logGroupName = functionName ? `/aws/lambda/${functionName}` : '';
+  const alarmPrefix = normalizeText(
+    config.aws.projectName && config.aws.stage
+      ? `${config.aws.projectName}-${config.aws.stage}-api-`
+      : functionName.replace(/-api$/i, '-')
+  );
+
+  const [logGroupsResult, alarmsResult] = await Promise.allSettled([
+    logGroupName
+      ? cloudWatchLogsClient.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: logGroupName, limit: 20 }))
+      : Promise.resolve({ logGroups: [] }),
+    alarmPrefix
+      ? cloudWatchClient.send(new DescribeAlarmsCommand({ AlarmNamePrefix: alarmPrefix, MaxRecords: 50 }))
+      : Promise.resolve({ MetricAlarms: [] })
+  ]);
+
+  let logGroup = null;
+  let logGroupError = '';
+  if (logGroupsResult.status === 'fulfilled') {
+    logGroup = (logGroupsResult.value?.logGroups || []).find((group) => normalizeText(group.logGroupName) === logGroupName) || null;
+  } else {
+    logGroupError = formatAwsError(logGroupsResult.reason);
+  }
+
+  let alarms = [];
+  let alarmsError = '';
+  if (alarmsResult.status === 'fulfilled') {
+    alarms = (alarmsResult.value?.MetricAlarms || []).map((alarm) => ({
+      name: normalizeText(alarm.AlarmName),
+      state: normalizeText(alarm.StateValue || 'UNKNOWN'),
+      reason: normalizeText(alarm.StateReason || '')
+    }));
+  } else {
+    alarmsError = formatAwsError(alarmsResult.reason);
+  }
+
+  const activeAlarms = alarms.filter((alarm) => normalizeLower(alarm.state) === 'alarm');
+  const status = logGroup && !activeAlarms.length ? 'healthy' : ((logGroup || alarms.length) ? 'degraded' : 'unavailable');
+  return {
+    service: 'cloudwatch',
+    status,
+    log_group: logGroup ? {
+      name: normalizeText(logGroup.logGroupName),
+      retention_days: Number(logGroup.retentionInDays || 0),
+      stored_bytes: Number(logGroup.storedBytes || 0)
+    } : null,
+    alarms,
+    active_alarm_count: activeAlarms.length,
+    errors: [logGroupError, alarmsError].filter(Boolean)
+  };
+}
+
+function summarizeServiceStatuses(services = []) {
+  const totals = {
+    total_services: services.length,
+    healthy_services: 0,
+    degraded_services: 0,
+    unavailable_services: 0
+  };
+  for (const service of services) {
+    const status = normalizeLower(service?.status);
+    if (status === 'healthy') totals.healthy_services += 1;
+    else if (status === 'degraded') totals.degraded_services += 1;
+    else totals.unavailable_services += 1;
+  }
+  let overall = 'healthy';
+  if (totals.degraded_services > 0) overall = 'degraded';
+  if (totals.healthy_services === 0 && totals.degraded_services === 0) overall = 'unavailable';
+  return { ...totals, overall_status: overall };
+}
+
 export async function getAdminOverview(request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
@@ -345,6 +644,38 @@ export async function getAdminOverview(request) {
         rate_limits_by_day: countByDay(rateLimits, 'window_start')
       },
       recent_audit: audits.slice(0, 25)
+    }
+  });
+}
+
+export async function getAdminAwsServices(request) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) return auth.response;
+  const requestHost = normalizeText(request?.headers?.host || request?.headers?.Host || '');
+
+  const [lambda, dynamodb, s3Status, cloudfront, cloudwatch] = await Promise.all([
+    inspectLambdaService(),
+    inspectDynamoDbTables(),
+    inspectS3Buckets(),
+    inspectCloudFrontService(requestHost),
+    inspectCloudWatchService()
+  ]);
+
+  const services = [lambda, cloudfront, dynamodb, s3Status, cloudwatch];
+  const summary = summarizeServiceStatuses(services);
+  return jsonResponse(200, {
+    success: true,
+    aws: {
+      checked_at: nowIso(),
+      region: normalizeText(config.aws.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1'),
+      summary,
+      services: {
+        lambda,
+        cloudfront,
+        dynamodb,
+        s3: s3Status,
+        cloudwatch
+      }
     }
   });
 }

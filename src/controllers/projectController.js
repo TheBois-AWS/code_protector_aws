@@ -83,7 +83,7 @@ export async function createProject(request, workspaceIdentifier) {
   const workspace = await resolveWorkspace(workspaceIdentifier);
   if (!workspace) return jsonResponse(404, { success: false, error: 'Workspace not found' });
   const access = await getWorkspaceAccess(workspace.id, userId);
-  if (!access || !hasPermission(access.role, 'manage_projects')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!access || !hasPermission(access.role, 'manage_projects')) return jsonResponse(404, { success: false, error: 'Workspace not found or access denied' });
 
   const project = {
     id: randomId(),
@@ -142,7 +142,7 @@ export async function updateProject(request, projectIdentifier) {
 
   const projectAccess = await getProjectAccess(projectIdentifier, userId);
   if (!projectAccess) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(projectAccess.access.role, 'edit')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(projectAccess.access.role, 'edit')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
 
   const workspace = await resolveWorkspace(projectAccess.workspaceId);
   const stored = await storeProjectContent(projectAccess.project, workspace, String(payload.content));
@@ -174,7 +174,7 @@ export async function deleteProject(request, projectIdentifier) {
   if (!userId) return unauthorized();
   const projectAccess = await getProjectAccess(projectIdentifier, userId);
   if (!projectAccess) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
 
   const files = await projectFilesRepo.listByProject(String(projectAccess.project.id));
   for (const file of files) {
@@ -197,7 +197,7 @@ export async function toggleProjectActive(request, projectIdentifier) {
   if (!userId) return unauthorized();
   const projectAccess = await getProjectAccess(projectIdentifier, userId);
   if (!projectAccess) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   const updated = await projectsRepo.update(String(projectAccess.project.id), { is_active: Number(projectAccess.project.is_active) ? 0 : 1 });
   await logAction(projectAccess.workspaceId, 'TOGGLE_PROJECT', `Set project ${projectAccess.project.id} active to ${updated.is_active}`, request);
   await broadcastWorkspaceEvent(projectAccess.workspaceId, 'PROJECT_UPDATE', { action: 'toggle_active', id: projectAccess.project.id, is_active: Number(updated.is_active) });
@@ -209,7 +209,7 @@ export async function updateProjectSettings(request, projectIdentifier) {
   if (!userId) return unauthorized();
   const projectAccess = await getProjectAccess(projectIdentifier, userId);
   if (!projectAccess) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
 
   const payload = parseJsonBody(request);
   if (!payload) return jsonResponse(400, { success: false, error: 'Invalid payload' });
@@ -230,7 +230,7 @@ export async function resetProjectStats(request, projectIdentifier) {
   if (!userId) return unauthorized();
   const projectAccess = await getProjectAccess(projectIdentifier, userId);
   if (!projectAccess) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   await projectsRepo.update(String(projectAccess.project.id), { execution_count: 0 });
   await logAction(projectAccess.workspaceId, 'RESET_PROJECT_STATS', `Reset stats for project ${projectAccess.project.id}`, request);
   await broadcastWorkspaceEvent(projectAccess.workspaceId, 'PROJECT_UPDATE', { action: 'reset_stats', id: projectAccess.project.id });
@@ -244,7 +244,7 @@ export async function renameProject(request, projectIdentifier) {
   if (!payload?.name) return jsonResponse(400, { success: false, error: 'Name required' });
   const projectAccess = await getProjectAccess(projectIdentifier, userId);
   if (!projectAccess) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
-  if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(403, { success: false, error: 'Access denied' });
+  if (!hasPermission(projectAccess.access.role, 'manage_projects')) return jsonResponse(404, { success: false, error: 'Project not found or access denied' });
   await projectsRepo.update(String(projectAccess.project.id), { name: String(payload.name) });
   await logAction(projectAccess.workspaceId, 'RENAME_PROJECT', `Renamed project ${projectAccess.project.id} to ${payload.name}`, request);
   await broadcastWorkspaceEvent(projectAccess.workspaceId, 'PROJECT_UPDATE', { action: 'rename', id: projectAccess.project.id, name: String(payload.name) });

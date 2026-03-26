@@ -16,7 +16,7 @@
         }
     </style>
     <script>
-        // Apply saved theme and guard auth before rendering protected UI.
+        // Apply saved theme and hard-block protected UI until workspace auth check finishes.
         (function() {
             document.documentElement.classList.add('auth-pending');
             try {
@@ -35,7 +35,6 @@
                 window.location.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`);
                 return;
             }
-            document.documentElement.classList.remove('auth-pending');
         })();
     </script>
     <!-- Load Chart.js BEFORE Monaco to avoid AMD conflict -->

@@ -258,8 +258,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Keep --delete disabled to avoid wiping fallback legacy objects from previous layouts.
-          aws s3 sync frontend/ "s3://${{ steps.stack_outputs.outputs.frontend_bucket }}" --region "${AWS_REGION}"
+          aws s3 rm "s3://${{ steps.stack_outputs.outputs.frontend_bucket }}" --recursive --region "${AWS_REGION}" || true
+          aws s3 sync frontend/ "s3://${{ steps.stack_outputs.outputs.frontend_bucket }}" --delete --region "${AWS_REGION}"
 
       - name: Invalidate CloudFront Cache
         shell: bash

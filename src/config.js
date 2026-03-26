@@ -8,6 +8,14 @@ export const config = {
   assetsBucket: process.env.APP_ASSETS_BUCKET || process.env.ASSETS_BUCKET || process.env.CONTENT_BUCKET || '',
   cookieSecure: process.env.COOKIE_SECURE !== 'false',
   lambdaMode: process.env.AWS_LAMBDA_FUNCTION_NAME ? 'lambda' : 'local',
+  aws: {
+    region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1',
+    stage: process.env.APP_STAGE || process.env.STAGE || '',
+    projectName: process.env.PROJECT_NAME || '',
+    functionName: process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.API_FUNCTION_NAME || '',
+    cloudFrontDistributionId: process.env.CLOUDFRONT_DISTRIBUTION_ID || '',
+    cloudFrontDomainName: process.env.CLOUDFRONT_DOMAIN_NAME || ''
+  },
   tables: {
     users: process.env.DDB_TABLE_USERS || process.env.DDB_USERS_TABLE || 'users',
     workspaces: process.env.DDB_TABLE_WORKSPACES || process.env.DDB_WORKSPACES_TABLE || 'workspaces',
