@@ -5,12 +5,22 @@ const adminState = {
   token: window.__ADMIN_TOKEN__ || localStorage.getItem('token') || '',
   overview: null,
   aws: null,
+  awsLoadingPromise: null,
+  awsAutoRefreshTimer: null,
+  awsLastFetchedAt: '',
   users: [],
   workspaces: [],
   audit: [],
   selectedEntity: null,
   selectedEntityRaw: null,
   activeTab: 'overview',
+  awsUi: {
+    window: localStorage.getItem('adminAwsWindow') || '24h',
+    autoRefresh: localStorage.getItem('adminAwsAutoRefresh') || 'off',
+    density: localStorage.getItem('adminAwsDensity') || 'comfortable',
+    dataView: localStorage.getItem('adminAwsDataView') || 'dynamodb',
+    selectedService: localStorage.getItem('adminAwsSelectedService') || 'lambda'
+  },
   ws: null,
   wsEndpoint: null,
   wsReconnectTimer: null,
@@ -25,6 +35,10 @@ const adminState = {
     targetType: null,
     targetId: null,
     reason: '',
+    value: '',
+    valueLabel: '',
+    valuePlaceholder: '',
+    onConfirm: null,
     challengeId: '',
     challenge: '',
     guardToken: ''
@@ -169,6 +183,934 @@ function formatCurrency(value, currency = 'USD') {
 function formatDateTime(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function formatPercent(value, fractionDigits = 2) {
+  const amount = safeNumber(value, 0);
+  return `${amount.toFixed(fractionDigits)}%`;
+}
+
+function formatCompactNumber(value) {
+  const amount = safeNumber(value, 0);
+  try {
+    return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(amount);
+  } catch {
+    return String(Math.round(amount));
+  }
+}
+
+function getAwsWindowValue() {
+  const allowed = new Set(['1h', '24h', '7d', '30d']);
+  const value = String(adminState.awsUi.window || '24h');
+  return allowed.has(value) ? value : '24h';
+}
+
+function getAwsAutoRefreshValue() {
+  const allowed = new Set(['off', '60s', '5m']);
+  const value = String(adminState.awsUi.autoRefresh || 'off');
+  return allowed.has(value) ? value : 'off';
+}
+
+function getAwsDensityValue() {
+  return String(adminState.awsUi.density || 'comfortable') === 'compact' ? 'compact' : 'comfortable';
+}
+
+function getAwsDataViewValue() {
+  const allowed = new Set(['dynamodb', 's3', 'alarms', 'billing']);
+  const value = String(adminState.awsUi.dataView || 'dynamodb');
+  return allowed.has(value) ? value : 'dynamodb';
+}
+
+function getAwsSelectedServiceKey() {
+  const allowed = new Set(['lambda', 'cloudfront', 'dynamodb', 's3', 'cloudwatch', 'billing']);
+  const value = String(adminState.awsUi.selectedService || 'lambda');
+  return allowed.has(value) ? value : 'lambda';
+}
+
+function setAwsUiSetting(key, value) {
+  adminState.awsUi[key] = value;
+  const storageKeys = {
+    window: 'adminAwsWindow',
+    autoRefresh: 'adminAwsAutoRefresh',
+    density: 'adminAwsDensity',
+    dataView: 'adminAwsDataView',
+    selectedService: 'adminAwsSelectedService'
+  };
+  const storageKey = storageKeys[key];
+  if (storageKey) localStorage.setItem(storageKey, String(value));
+}
+
+function syncAwsUiControls() {
+  const windowSelect = document.getElementById('awsTimeRangeSelect');
+  const autoSelect = document.getElementById('awsAutoRefreshSelect');
+  const densityButton = document.getElementById('awsDensityToggle');
+  if (windowSelect) windowSelect.value = getAwsWindowValue();
+  if (autoSelect) autoSelect.value = getAwsAutoRefreshValue();
+  if (densityButton) densityButton.textContent = getAwsDensityValue() === 'compact' ? 'Compact' : 'Comfortable';
+  document.body.classList.toggle('aws-density-compact', getAwsDensityValue() === 'compact');
+}
+
+function setAwsLiveStatus(message) {
+  const el = document.getElementById('awsStatusLiveRegion');
+  if (el) el.textContent = message || '';
+}
+
+function setAwsPanelBusy(busy) {
+  const panel = document.getElementById('awsPanel');
+  const refresh = document.getElementById('awsRefreshButton');
+  if (panel) panel.setAttribute('aria-busy', busy ? 'true' : 'false');
+  if (refresh) refresh.disabled = Boolean(busy);
+}
+
+function awsServiceByKey(key) {
+  const services = adminState.aws?.services || {};
+  return services[String(key || '').toLowerCase()] || null;
+}
+
+function awsServiceOrder() {
+  return ['lambda', 'cloudfront', 'dynamodb', 's3', 'cloudwatch', 'billing'];
+}
+
+function awsSummaryChips(service) {
+  const key = String(service?.service || '').toLowerCase();
+  const chips = [];
+  if (key === 'lambda') {
+    chips.push({ label: 'Invocations', value: formatCompactNumber(service.metrics_24h?.invocations || 0) });
+    chips.push({ label: 'Errors', value: formatCompactNumber(service.metrics_24h?.errors || 0) });
+    chips.push({ label: 'Throttles', value: formatCompactNumber(service.metrics_24h?.throttles || 0) });
+    chips.push({ label: 'Avg duration', value: `${safeNumber(service.metrics_24h?.avg_duration_ms || 0).toFixed(1)} ms` });
+  } else if (key === 'cloudfront') {
+    chips.push({ label: 'Requests', value: formatCompactNumber(service.metrics_24h?.requests || 0) });
+    chips.push({ label: 'Bytes', value: formatBytes(service.metrics_24h?.bytes_downloaded || 0) });
+    chips.push({ label: '4xx', value: formatPercent(service.metrics_24h?.avg_4xx_error_rate || 0, 3) });
+    chips.push({ label: '5xx', value: formatPercent(service.metrics_24h?.avg_5xx_error_rate || 0, 3) });
+  } else if (key === 'dynamodb') {
+    chips.push({ label: 'Tables', value: formatCompactNumber(service.summary?.total_tables || 0) });
+    chips.push({ label: 'Items', value: formatCompactNumber(service.summary?.total_items || 0) });
+    chips.push({ label: 'Storage', value: formatBytes(service.summary?.total_size_bytes || 0) });
+    chips.push({ label: 'Healthy', value: formatCompactNumber(service.summary?.healthy_tables || 0) });
+  } else if (key === 's3') {
+    chips.push({ label: 'Buckets', value: formatCompactNumber(service.summary?.total_buckets || 0) });
+    chips.push({ label: 'Objects', value: formatCompactNumber(service.summary?.total_sampled_objects || 0) });
+    chips.push({ label: 'Sampled', value: formatBytes(service.summary?.total_sampled_size_bytes || 0) });
+    chips.push({ label: 'Healthy', value: formatCompactNumber(service.summary?.healthy_buckets || 0) });
+  } else if (key === 'cloudwatch') {
+    chips.push({ label: 'Alarms', value: formatCompactNumber(service.active_alarm_count || 0) });
+    chips.push({ label: 'Retention', value: service.log_group?.retention_days ? `${safeNumber(service.log_group?.retention_days || 0)}d` : 'n/a' });
+    chips.push({ label: 'Stored', value: formatBytes(service.log_group?.stored_bytes || 0) });
+    chips.push({ label: 'Errors', value: formatCompactNumber((service.errors || []).length || 0) });
+  } else if (key === 'billing') {
+    chips.push({ label: 'MTD', value: formatCurrency(service.month_to_date_total || 0, service.currency || 'USD') });
+    chips.push({ label: 'Forecast', value: formatCurrency(service.forecast_month_total || 0, service.currency || 'USD') });
+    chips.push({ label: 'Days', value: formatCompactNumber((service.daily_costs || []).length || 0) });
+  }
+  return chips;
+}
+
+function awsServiceActions(key) {
+  const mapping = {
+    lambda: [
+      { action: 'lambda_refresh', label: 'Refresh config', icon: 'refresh-cw', variant: 'secondary' },
+      { action: 'lambda_concurrency', label: 'Set concurrency', icon: 'sliders-horizontal', variant: 'primary' }
+    ],
+    cloudfront: [
+      { action: 'cloudfront_invalidations', label: 'List invalidations', icon: 'list', variant: 'secondary' },
+      { action: 'cloudfront_invalidation', label: 'Invalidate cache', icon: 'refresh-ccw', variant: 'primary' }
+    ],
+    cloudwatch: [
+      { action: 'cloudwatch_retention', label: 'Set retention', icon: 'clock-3', variant: 'primary' },
+      { action: 'cloudwatch_alarm_actions', label: 'Alarm actions', icon: 'bell-off', variant: 'secondary' }
+    ],
+    billing: [
+      { action: 'billing_refresh', label: 'Refresh billing', icon: 'refresh-cw', variant: 'secondary' },
+      { action: 'billing_export', label: 'Export CSV', icon: 'download', variant: 'primary' }
+    ]
+  };
+  return mapping[String(key || '').toLowerCase()] || [
+    { action: 'service_refresh', label: 'Refresh', icon: 'refresh-cw', variant: 'secondary' }
+  ];
+}
+
+function awsServiceSubtitle(service) {
+  const key = String(service?.service || '').toLowerCase();
+  if (key === 'lambda') return `${service.runtime || '-'}  -  ${safeNumber(service.memory_size || 0)} MB  -  ${safeNumber(service.timeout_seconds || 0)}s timeout`;
+  if (key === 'cloudfront') return `${service.domain_name || '-'}  -  ${safeNumber(service.in_progress_invalidations || 0)} invalidations in flight`;
+  if (key === 'dynamodb') return `${safeNumber(service.summary?.total_tables || 0)} tables  -  ${formatBytes(service.summary?.total_size_bytes || 0)} storage`;
+  if (key === 's3') return `${safeNumber(service.summary?.total_buckets || 0)} buckets  -  ${safeNumber(service.summary?.healthy_buckets || 0)} healthy`;
+  if (key === 'cloudwatch') return `${safeNumber(service.active_alarm_count || 0)} active alarms  -  ${service.log_group?.name || 'No log group'}`;
+  if (key === 'billing') return `${service.provider || 'cost_explorer'}  -  ${service.currency || 'USD'}  -  ${service.period_start || '-'} to ${service.period_end || '-'}`;
+  return '';
+}
+
+function awsServiceFreshness(service) {
+  const key = String(service?.service || '').toLowerCase();
+  if (key === 'billing') return 'Billing';
+  if (service?.checked_at) return `Updated ${formatDateTime(service.checked_at)}`;
+  return `Updated ${formatDateTime(adminState.aws?.checked_at || adminState.awsLastFetchedAt)}`;
+}
+
+function awsServiceDescription(service) {
+  const key = String(service?.service || '').toLowerCase();
+  if (key === 'lambda') {
+    return `${service.state || 'unknown'} / ${service.last_update_status || 'n/a'} / concurrency ${safeNumber(service.reserved_concurrency || 0)}`;
+  }
+  if (key === 'cloudfront') {
+    return `${service.deployment_status || service.status || 'unknown'} / ${service.lookup?.method || 'lookup'} / ${service.health_probe?.message || 'no probe'}`;
+  }
+  if (key === 'dynamodb') {
+    return `${safeNumber(service.summary?.healthy_tables || 0)} healthy / ${safeNumber(service.summary?.unhealthy_tables || 0)} unhealthy`;
+  }
+  if (key === 's3') {
+    return `${service.summary?.healthy_buckets || 0} healthy / ${service.summary?.unhealthy_buckets || 0} unhealthy`;
+  }
+  if (key === 'cloudwatch') {
+    return `${service.log_group?.retention_days ? `${service.log_group.retention_days} day retention` : 'No retention set'} / ${safeNumber(service.active_alarm_count || 0)} alarms`;
+  }
+  if (key === 'billing') {
+    return `${formatCurrency(service.month_to_date_total || 0, service.currency || 'USD')} month-to-date / ${formatCurrency(service.forecast_month_total || 0, service.currency || 'USD')} forecast`;
+  }
+  return '';
+}
+
+function awsServiceTone(service) {
+  const key = String(service?.service || '').toLowerCase();
+  if (key === 'billing') return 'success';
+  if (String(service?.status || '').toLowerCase() === 'healthy') return 'success';
+  if (String(service?.status || '').toLowerCase() === 'degraded') return '';
+  return 'danger';
+}
+
+function awsServiceKeyFromAction(action) {
+  const value = String(action || '').toLowerCase();
+  if (value.includes('lambda')) return 'lambda';
+  if (value.includes('cloudfront') || value.includes('cf')) return 'cloudfront';
+  if (value.includes('cloudwatch') || value.includes('alarm')) return 'cloudwatch';
+  if (value.includes('billing')) return 'billing';
+  if (value.includes('s3')) return 's3';
+  if (value.includes('dynamo')) return 'dynamodb';
+  return getAwsSelectedServiceKey();
+}
+
+function renderAwsChipList(items) {
+  return `<div class="aws-chip-list">${items.map((item) => `
+    <div class="aws-chip">
+      <span class="aws-chip-label">${escapeHtml(item.label)}</span>
+      <span class="aws-chip-value">${escapeHtml(item.value)}</span>
+    </div>
+  `).join('')}</div>`;
+}
+
+function renderAwsActionButtons(service) {
+  const key = String(service?.service || '').toLowerCase();
+  return `<div class="aws-action-row">${awsServiceActions(key).map((item) => `
+    <button type="button" class="aws-action-button ${item.variant === 'primary' ? 'primary' : ''}" data-aws-action="${escapeHtml(item.action)}" data-aws-service="${escapeHtml(key)}">
+      <i data-lucide="${escapeHtml(item.icon)}" class="w-4 h-4"></i>
+      <span>${escapeHtml(item.label)}</span>
+    </button>
+  `).join('')}</div>`;
+}
+
+function renderAwsInspectorCard(service) {
+  const key = String(service?.service || '').toLowerCase();
+  const title = {
+    lambda: 'Lambda Inspector',
+    cloudfront: 'CloudFront Inspector',
+    dynamodb: 'DynamoDB Inspector',
+    s3: 'S3 Inspector',
+    cloudwatch: 'CloudWatch Inspector',
+    billing: 'Billing Inspector'
+  }[key] || 'AWS Inspector';
+  const details = [];
+  if (key === 'lambda') {
+    details.push(['Function', `<span class="font-mono break-all">${escapeHtml(service.function_name || '-')}</span>`]);
+    details.push(['Runtime', service.runtime || '-']);
+    details.push(['Memory', `${safeNumber(service.memory_size || 0)} MB`]);
+    details.push(['Timeout', `${safeNumber(service.timeout_seconds || 0)} s`]);
+    details.push(['Reserved concurrency', `${safeNumber(service.reserved_concurrency || 0)}`]);
+    details.push(['State', `${service.state || '-'} / ${service.last_update_status || '-'}`]);
+    details.push(['Version', service.version || '-']);
+  } else if (key === 'cloudfront') {
+    details.push(['Distribution', `<span class="font-mono break-all">${escapeHtml(service.distribution_id || '-')}</span>`]);
+    details.push(['Domain', service.domain_name || '-']);
+    details.push(['Aliases', `${safeNumber(service.aliases?.length || 0)}`]);
+    details.push(['Origins', `${safeNumber(service.origins?.length || 0)}`]);
+    details.push(['Deployment', service.deployment_status || service.status || '-']);
+    details.push(['Probe', service.health_probe?.message || '-']);
+  } else if (key === 'cloudwatch') {
+    details.push(['Log group', `<span class="font-mono break-all">${escapeHtml(service.log_group?.name || '-')}</span>`]);
+    details.push(['Retention', service.log_group?.retention_days ? `${service.log_group.retention_days} days` : '-']);
+    details.push(['Stored bytes', formatBytes(service.log_group?.stored_bytes || 0)]);
+    details.push(['Active alarms', `${safeNumber(service.active_alarm_count || 0)}`]);
+  } else if (key === 'billing') {
+    details.push(['Provider', service.provider || '-']);
+    details.push(['Period', `${service.period_start || '-'} -> ${service.period_end || '-'}`]);
+    details.push(['Month-to-date', formatCurrency(service.month_to_date_total || 0, service.currency || 'USD')]);
+    details.push(['Forecast', formatCurrency(service.forecast_month_total || 0, service.currency || 'USD')]);
+  } else if (key === 'dynamodb') {
+    details.push(['Tables', `${safeNumber(service.summary?.total_tables || 0)}`]);
+    details.push(['Healthy', `${safeNumber(service.summary?.healthy_tables || 0)}`]);
+    details.push(['Items', `${safeNumber(service.summary?.total_items || 0)}`]);
+    details.push(['Storage', formatBytes(service.summary?.total_size_bytes || 0)]);
+  } else if (key === 's3') {
+    details.push(['Buckets', `${safeNumber(service.summary?.total_buckets || 0)}`]);
+    details.push(['Healthy', `${safeNumber(service.summary?.healthy_buckets || 0)}`]);
+    details.push(['Objects sampled', `${safeNumber(service.summary?.total_sampled_objects || 0)}`]);
+    details.push(['Sampled size', formatBytes(service.summary?.total_sampled_size_bytes || 0)]);
+  }
+  return `
+    <div class="aws-inspector-card">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <div class="aws-section-label">${escapeHtml(title)}</div>
+          <h3 class="aws-section-title">${escapeHtml(String(service?.service || key || 'AWS').toUpperCase())}</h3>
+          <p class="aws-service-subtitle">${escapeHtml(awsServiceSubtitle(service))}</p>
+        </div>
+        ${badgeHtml(String(service?.status || 'unknown').toUpperCase(), awsServiceTone(service))}
+      </div>
+      <div class="aws-inspector-grid">
+        ${details.map(([label, value]) => `
+          <div class="aws-detail-tile">
+            <span class="aws-detail-label">${escapeHtml(label)}</span>
+            <span class="aws-detail-value">${value}</span>
+          </div>
+        `).join('')}
+      </div>
+      ${renderAwsChipList(awsSummaryChips(service))}
+      ${key === 'cloudfront' ? '<div id="awsCloudFrontInvalidations" class="space-y-3 mt-4"></div>' : ''}
+      <div class="aws-inspector-meta">
+        <span>${escapeHtml(awsServiceFreshness(service))}</span>
+        ${service.error ? `<span class="text-rose-300">${escapeHtml(service.error)}</span>` : ''}
+        ${Array.isArray(service.metric_errors) && service.metric_errors.length ? `<span class="text-amber-300">${escapeHtml(service.metric_errors.join(' | '))}</span>` : ''}
+      </div>
+      ${renderAwsActionButtons(service)}
+    </div>
+  `;
+}
+
+function setAwsSelectedService(serviceKey) {
+  setAwsUiSetting('selectedService', serviceKey);
+  renderAwsServicesPanel();
+}
+
+function setAwsDataView(view) {
+  setAwsUiSetting('dataView', view);
+  renderAwsServicesPanel();
+}
+
+function setAwsDataViewVisibility(view) {
+  const normalized = ['dynamodb', 's3', 'alarms', 'billing'].includes(view) ? view : 'dynamodb';
+  ['dynamodb', 's3', 'alarms', 'billing'].forEach((panel) => {
+    document.getElementById(`awsDataPanel-${panel}`)?.classList.toggle('hidden', panel !== normalized);
+  });
+  document.querySelectorAll('[data-aws-data-view]').forEach((button) => {
+    const active = button.dataset.awsDataView === normalized;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  if (normalized !== getAwsDataViewValue()) setAwsUiSetting('dataView', normalized);
+}
+
+function renderAwsServiceCards(services = {}) {
+  const cards = document.getElementById('awsServiceCards');
+  if (!cards) return;
+  const rows = awsServiceOrder().map((key) => services[key]).filter(Boolean);
+  if (!rows.length) {
+    renderEmpty(cards, 'No service checks yet', 'Refresh the panel to run AWS diagnostics.');
+    return;
+  }
+  const selectedKey = getAwsSelectedServiceKey();
+  cards.innerHTML = rows.map((service) => {
+    const key = String(service.service || '').toLowerCase();
+    const selected = key === selectedKey;
+    return `
+      <article class="aws-service-card ${selected ? 'selected' : ''}" data-aws-select-service="${escapeHtml(key)}" tabindex="0" role="button" aria-label="Inspect ${escapeHtml(key)} service">
+        <div class="aws-service-card-head">
+          <div class="min-w-0">
+            <div class="aws-section-label">${escapeHtml(String(service.service || '').toUpperCase())}</div>
+            <div class="aws-service-title">${escapeHtml(awsServiceSubtitle(service))}</div>
+          </div>
+          <div class="flex flex-col items-end gap-2 shrink-0">
+            ${badgeHtml(String(service.status || 'unknown').toUpperCase(), awsServiceTone(service))}
+            <span class="aws-service-freshness">${escapeHtml(awsServiceFreshness(service))}</span>
+          </div>
+        </div>
+        <p class="aws-service-description">${escapeHtml(awsServiceDescription(service))}</p>
+        ${renderAwsChipList(awsSummaryChips(service))}
+        <div class="aws-action-row">
+          <button type="button" class="aws-action-button secondary" data-aws-action="select_service" data-aws-service="${escapeHtml(key)}">
+            <i data-lucide="eye" class="w-4 h-4"></i><span>Inspect</span>
+          </button>
+          ${awsServiceActions(key).map((item) => `
+            <button type="button" class="aws-action-button ${item.variant === 'primary' ? 'primary' : ''}" data-aws-action="${escapeHtml(item.action)}" data-aws-service="${escapeHtml(key)}">
+              <i data-lucide="${escapeHtml(item.icon)}" class="w-4 h-4"></i><span>${escapeHtml(item.label)}</span>
+            </button>
+          `).join('')}
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderAwsMetadata(aws = {}) {
+  const metadata = document.getElementById('awsMetadataDetails');
+  if (!metadata) return;
+  const info = aws.metadata || {};
+  metadata.innerHTML = `
+    <div class="aws-detail-tile"><span class="aws-detail-label">Project</span><span class="aws-detail-value">${escapeHtml(info.project_name || '-')}</span></div>
+    <div class="aws-detail-tile"><span class="aws-detail-label">Stage</span><span class="aws-detail-value">${escapeHtml(info.stage || '-')}</span></div>
+    <div class="aws-detail-tile"><span class="aws-detail-label">Lambda function</span><span class="aws-detail-value font-mono break-all">${escapeHtml(info.lambda_function || '-')}</span></div>
+    <div class="aws-detail-tile"><span class="aws-detail-label">Configured CF domain</span><span class="aws-detail-value">${escapeHtml(info.configured_cloudfront_domain || '-')}</span></div>
+    <div class="aws-detail-tile"><span class="aws-detail-label">Configured CF dist ID</span><span class="aws-detail-value font-mono break-all">${escapeHtml(info.configured_cloudfront_distribution_id || '-')}</span></div>
+    <div class="aws-detail-tile"><span class="aws-detail-label">Last fetch</span><span class="aws-detail-value">${escapeHtml(formatDateTime(aws.checked_at || adminState.awsLastFetchedAt))}</span></div>
+    <div class="aws-detail-tile"><span class="aws-detail-label">Window</span><span class="aws-detail-value">${escapeHtml(getAwsWindowValue())}</span></div>
+    <div class="aws-detail-tile"><span class="aws-detail-label">Density</span><span class="aws-detail-value">${escapeHtml(getAwsDensityValue())}</span></div>
+  `;
+}
+
+function renderAwsInspector(aws = {}) {
+  const inspector = document.getElementById('awsInspectorBody');
+  if (!inspector) return;
+  const selectedKey = getAwsSelectedServiceKey();
+  const service = awsServiceByKey(selectedKey) || awsServiceByKey('lambda') || Object.values(aws.services || {}).find(Boolean) || null;
+  if (!service) {
+    inspector.innerHTML = '<div class="admin-empty">No AWS data loaded yet. Refresh the panel to inspect services.</div>';
+    return;
+  }
+  inspector.innerHTML = renderAwsInspectorCard(service);
+  const selectedLabel = document.getElementById('awsSelectedServiceLabel');
+  if (selectedLabel) selectedLabel.textContent = `${String(service.service || selectedKey).toUpperCase()} selected`;
+  const metricsFreshness = document.getElementById('awsMetricsFreshness');
+  if (metricsFreshness) metricsFreshness.textContent = awsServiceFreshness(service);
+}
+
+function renderAwsDynamoTable(dynamodb = {}) {
+  const wrap = document.getElementById('awsDynamoTableWrap');
+  if (!wrap) return;
+  const rows = Array.isArray(dynamodb.tables) ? dynamodb.tables : [];
+  if (!rows.length) {
+    renderEmpty(wrap, 'No DynamoDB tables', 'No table diagnostics were returned by the API.');
+    return;
+  }
+  renderAwsTableWrap(wrap, `
+    <table class="admin-table">
+      <caption class="sr-only">DynamoDB service table diagnostics</caption>
+      <thead>
+        <tr>
+          <th scope="col">Table</th>
+          <th scope="col">Status</th>
+          <th scope="col">Items</th>
+          <th scope="col">Size</th>
+          <th scope="col">GSI</th>
+          <th scope="col">Billing / Class</th>
+          <th scope="col">Stream</th>
+          <th scope="col">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((table) => `
+          <tr data-dynamo-table="${escapeHtml(table.name || '')}">
+            <td><div class="entity-name font-mono break-all">${escapeHtml(table.name || '-')}</div><div class="text-xs text-gray-400 mt-1">${escapeHtml(table.arn || '')}</div></td>
+            <td>${badgeHtml(String(table.status || 'unknown').toUpperCase(), awsServiceTone({ service: 'dynamodb', status: table.healthy ? 'healthy' : 'degraded' }))}</td>
+            <td class="text-sm text-gray-300">${escapeHtml(String(safeNumber(table.item_count || 0)))}</td>
+            <td class="text-sm text-gray-300">${escapeHtml(formatBytes(table.size_bytes || 0))}</td>
+            <td class="text-sm text-gray-300">${escapeHtml(String(safeNumber(table.gsi_count || 0)))}</td>
+            <td class="text-sm text-gray-300">${escapeHtml(`${table.billing_mode || '-'} / ${table.table_class || '-'}`)}</td>
+            <td class="text-sm text-gray-300">${escapeHtml(table.stream_enabled ? (table.stream_view_type || 'Enabled') : 'Disabled')}</td>
+            <td><div class="admin-action-group">
+              <button type="button" class="aws-action-button secondary" data-aws-action="dynamo_refresh" data-aws-table="${escapeHtml(table.name || '')}"><i data-lucide="refresh-cw" class="w-4 h-4"></i><span>Refresh</span></button>
+              <button type="button" class="aws-action-button" data-aws-action="dynamo_deletion_protection" data-aws-table="${escapeHtml(table.name || '')}"><i data-lucide="shield" class="w-4 h-4"></i><span>Deletion protection</span></button>
+            </div></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `);
+}
+
+function renderAwsS3Table(s3Status = {}) {
+  const wrap = document.getElementById('awsS3TableWrap');
+  if (!wrap) return;
+  const rows = Array.isArray(s3Status.buckets) ? s3Status.buckets : [];
+  if (!rows.length) {
+    renderEmpty(wrap, 'No S3 buckets', 'No bucket diagnostics were returned by the API.');
+    return;
+  }
+  renderAwsTableWrap(wrap, `
+    <table class="admin-table">
+      <caption class="sr-only">S3 bucket diagnostics</caption>
+      <thead>
+        <tr>
+          <th scope="col">Bucket</th>
+          <th scope="col">Status</th>
+          <th scope="col">Region</th>
+          <th scope="col">Versioning</th>
+          <th scope="col">Encryption</th>
+          <th scope="col">Sampled Objects</th>
+          <th scope="col">Sampled Size</th>
+          <th scope="col">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((bucket) => `
+          <tr data-s3-bucket="${escapeHtml(bucket.name || '')}">
+            <td><div class="entity-name font-mono break-all">${escapeHtml(bucket.name || '-')}</div><div class="text-xs text-gray-400 mt-1">${escapeHtml(bucket.region || '')}</div></td>
+            <td>${badgeHtml(String(bucket.status || 'unknown').toUpperCase(), awsServiceTone({ service: 's3', status: bucket.healthy ? 'healthy' : 'degraded' }))}</td>
+            <td class="text-sm text-gray-300">${escapeHtml(bucket.region || '-')}</td>
+            <td class="text-sm text-gray-300">${escapeHtml(bucket.versioning || '-')}</td>
+            <td class="text-sm text-gray-300">${escapeHtml(bucket.encryption || '-')}</td>
+            <td class="text-sm text-gray-300">${escapeHtml(`${safeNumber(bucket.sampled_object_count || 0)}${bucket.sampled_listing_truncated ? '+' : ''}`)}</td>
+            <td class="text-sm text-gray-300">${escapeHtml(formatBytes(bucket.sampled_size_bytes || 0))}</td>
+            <td><div class="admin-action-group">
+              <button type="button" class="aws-action-button secondary" data-aws-action="s3_rescan" data-aws-bucket="${escapeHtml(bucket.name || '')}"><i data-lucide="refresh-cw" class="w-4 h-4"></i><span>Rescan</span></button>
+              <button type="button" class="aws-action-button" data-aws-action="s3_versioning" data-aws-bucket="${escapeHtml(bucket.name || '')}"><i data-lucide="layers-3" class="w-4 h-4"></i><span>Versioning</span></button>
+              <button type="button" class="aws-action-button" data-aws-action="s3_encryption" data-aws-bucket="${escapeHtml(bucket.name || '')}"><i data-lucide="lock-keyhole" class="w-4 h-4"></i><span>Encryption</span></button>
+            </div></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `);
+}
+
+function renderAwsCloudWatchPanel(services = {}) {
+  const cloudwatch = services.cloudwatch || {};
+  const details = document.getElementById('awsCloudWatchDetails');
+  if (details) {
+    details.innerHTML = `
+      <div class="aws-detail-tile"><span class="aws-detail-label">Log group</span><span class="aws-detail-value font-mono break-all">${escapeHtml(cloudwatch.log_group?.name || '-')}</span></div>
+      <div class="aws-detail-tile"><span class="aws-detail-label">Retention</span><span class="aws-detail-value">${escapeHtml(cloudwatch.log_group?.retention_days ? `${cloudwatch.log_group.retention_days} days` : '-')}</span></div>
+      <div class="aws-detail-tile"><span class="aws-detail-label">Stored bytes</span><span class="aws-detail-value">${escapeHtml(formatBytes(cloudwatch.log_group?.stored_bytes || 0))}</span></div>
+      <div class="aws-detail-tile"><span class="aws-detail-label">Active alarms</span><span class="aws-detail-value">${escapeHtml(String(safeNumber(cloudwatch.active_alarm_count || 0)))}</span></div>
+      ${cloudwatch.errors?.length ? `<div class="text-amber-300 text-sm">${escapeHtml(cloudwatch.errors.join(' | '))}</div>` : ''}
+    `;
+  }
+
+  const alarmsContainer = document.getElementById('awsCloudWatchAlarms');
+  if (alarmsContainer) {
+    const alarms = Array.isArray(cloudwatch.alarms) ? cloudwatch.alarms : [];
+    if (!alarms.length) {
+      renderEmpty(alarmsContainer, 'No alarms returned', 'No CloudWatch alarms matched the current project prefix.');
+    } else {
+      alarmsContainer.innerHTML = alarms.slice(0, 12).map((alarm) => `
+        <div class="aws-detail-tile">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="font-semibold text-white break-all">${escapeHtml(alarm.name || '-')}</div>
+              <div class="text-xs text-gray-400 mt-1">${escapeHtml(alarm.reason || 'No alarm reason provided')}</div>
+            </div>
+            ${badgeHtml(String(alarm.state || 'unknown').toUpperCase(), awsServiceTone({ service: 'cloudwatch', status: String(alarm.state || '').toLowerCase() === 'alarm' ? 'degraded' : 'healthy' }))}
+          </div>
+          <div class="aws-action-row mt-3">
+            <button type="button" class="aws-action-button secondary" data-aws-action="cloudwatch_alarm_toggle" data-aws-alarm="${escapeHtml(alarm.name || '')}" data-aws-enabled="false"><i data-lucide="bell-off" class="w-4 h-4"></i><span>Disable actions</span></button>
+            <button type="button" class="aws-action-button" data-aws-action="cloudwatch_alarm_toggle" data-aws-alarm="${escapeHtml(alarm.name || '')}" data-aws-enabled="true"><i data-lucide="bell" class="w-4 h-4"></i><span>Enable actions</span></button>
+            <button type="button" class="aws-action-button secondary" data-aws-action="cloudwatch_snooze" data-aws-alarm="${escapeHtml(alarm.name || '')}"><i data-lucide="moon-star" class="w-4 h-4"></i><span>Snooze</span></button>
+            <button type="button" class="aws-action-button secondary" data-aws-action="cloudwatch_unsnooze" data-aws-alarm="${escapeHtml(alarm.name || '')}"><i data-lucide="refresh-cw" class="w-4 h-4"></i><span>Unsnooze</span></button>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+}
+
+function renderAwsBillingPanel(services = {}) {
+  const billing = services.billing || {};
+  const details = document.getElementById('awsBillingDetails');
+  if (details) {
+    details.innerHTML = `
+      <div class="aws-detail-tile"><span class="aws-detail-label">Provider</span><span class="aws-detail-value">${escapeHtml(billing.provider || '-')}</span></div>
+      <div class="aws-detail-tile"><span class="aws-detail-label">Month-to-date</span><span class="aws-detail-value">${escapeHtml(formatCurrency(billing.month_to_date_total || 0, billing.currency || 'USD'))}</span></div>
+      <div class="aws-detail-tile"><span class="aws-detail-label">Forecast</span><span class="aws-detail-value">${escapeHtml(formatCurrency(billing.forecast_month_total || 0, billing.currency || 'USD'))}</span></div>
+      <div class="aws-detail-tile"><span class="aws-detail-label">Period</span><span class="aws-detail-value">${escapeHtml(`${billing.period_start || '-'} -> ${billing.period_end || '-'}`)}</span></div>
+      ${billing.error ? `<div class="text-rose-300 text-sm">${escapeHtml(billing.error)}</div>` : ''}
+    `;
+  }
+  renderAwsBillingChart(billing);
+
+  const billingBreakdown = document.getElementById('awsBillingBreakdown');
+  if (billingBreakdown) {
+    const rows = Array.isArray(billing.service_breakdown) ? billing.service_breakdown : [];
+    if (!rows.length) {
+      renderEmpty(billingBreakdown, 'No billing breakdown', 'Cost Explorer breakdown is not available yet.');
+    } else {
+      billingBreakdown.innerHTML = rows.map((row) => `
+        <div class="aws-detail-tile">
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-sm text-gray-200 break-all">${escapeHtml(row.service || 'Unknown')}</div>
+            <div class="text-sm font-semibold text-white">${escapeHtml(formatCurrency(row.cost || 0, billing.currency || 'USD'))}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+}
+
+function renderAwsDataPanels(services = {}) {
+  renderAwsDynamoTable(services.dynamodb || {});
+  renderAwsS3Table(services.s3 || {});
+  renderAwsCloudWatchPanel(services);
+  renderAwsBillingPanel(services);
+  setAwsDataViewVisibility(getAwsDataViewValue());
+}
+
+async function loadAwsCloudFrontInvalidations(distributionId) {
+  if (!distributionId) return [];
+  const response = await apiFetch(`/api/admin/aws/cloudfront/invalidations?distribution_id=${encodeURIComponent(distributionId)}&limit=20`);
+  const data = await readResponse(response);
+  if (!response.ok || data.success === false) throw new Error(data.error || `Failed to load invalidations (${response.status})`);
+  return normalizeList(data.invalidations, ['invalidations']);
+}
+
+function renderAwsCloudFrontInvalidations(service, invalidations = []) {
+  const list = document.getElementById('awsCloudFrontInvalidations');
+  if (!list) return;
+  if (!invalidations.length) {
+    renderEmpty(list, 'No invalidations', 'Create an invalidation to see recent cache purge history.');
+    return;
+  }
+  list.innerHTML = invalidations.slice(0, 8).map((item) => `
+    <div class="aws-detail-tile">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <div class="font-semibold text-white break-all">${escapeHtml(item.id || item.invalidation_id || '-')}</div>
+          <div class="text-xs text-gray-400 mt-1">${escapeHtml(item.create_time || item.created_at || item.status || '')}</div>
+        </div>
+        ${badgeHtml(String(item.status || 'unknown').toUpperCase(), serviceTone(String(item.status || '').toLowerCase() === 'completed' ? 'healthy' : 'degraded'))}
+      </div>
+      <div class="text-xs text-gray-400 mt-2">${escapeHtml(`${safeNumber(item.paths_count || (item.paths || []).length || 0)} path(s)`)}</div>
+    </div>
+  `).join('');
+}
+
+function scheduleAwsAutoRefresh() {
+  if (adminState.awsAutoRefreshTimer) {
+    clearTimeout(adminState.awsAutoRefreshTimer);
+    adminState.awsAutoRefreshTimer = null;
+  }
+  const mode = getAwsAutoRefreshValue();
+  if (mode === 'off' || document.hidden || getActivePanelId() !== 'aws') return;
+  const delay = mode === '5m' ? 5 * 60 * 1000 : 60 * 1000;
+  adminState.awsAutoRefreshTimer = setTimeout(async () => {
+    adminState.awsAutoRefreshTimer = null;
+    if (!document.hidden && getActivePanelId() === 'aws') {
+      await loadAwsStatus({ force: true, silent: true });
+    }
+    scheduleAwsAutoRefresh();
+  }, delay);
+}
+
+function awsRefreshUrl() {
+  const query = new URLSearchParams();
+  query.set('window', getAwsWindowValue());
+  return `/api/admin/aws/services?${query.toString()}`;
+}
+
+function exportAwsSnapshotCsv() {
+  const aws = adminState.aws || {};
+  const rows = [['service', 'label', 'value'].join(',')];
+  const push = (service, label, value) => rows.push([service, label, value].map((item) => `"${String(item).replace(/"/g, '""')}"`).join(','));
+  push('aws', 'overall_status', aws.summary?.overall_status || '');
+  push('aws', 'region', aws.region || '');
+  push('lambda', 'invocations', safeNumber(aws.services?.lambda?.metrics_24h?.invocations || 0));
+  push('lambda', 'errors', safeNumber(aws.services?.lambda?.metrics_24h?.errors || 0));
+  push('cloudfront', 'requests', safeNumber(aws.services?.cloudfront?.metrics_24h?.requests || 0));
+  push('cloudfront', 'bytes_downloaded', safeNumber(aws.services?.cloudfront?.metrics_24h?.bytes_downloaded || 0));
+  push('dynamodb', 'tables', safeNumber(aws.services?.dynamodb?.summary?.total_tables || 0));
+  push('s3', 'buckets', safeNumber(aws.services?.s3?.summary?.total_buckets || 0));
+  push('cloudwatch', 'alarms', safeNumber(aws.services?.cloudwatch?.active_alarm_count || 0));
+  push('billing', 'month_to_date_total', safeNumber(aws.services?.billing?.month_to_date_total || 0));
+  downloadBlob(new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' }), `aws-snapshot-${Date.now()}.csv`);
+}
+
+async function handleAwsAction(action, context = {}) {
+  const key = String(action || '').toLowerCase();
+  if (key === 'select_service') {
+    setAwsSelectedService(context.service || context.key || 'lambda');
+    return;
+  }
+  if (key === 'service_refresh' || key === 'lambda_refresh' || key === 'billing_refresh') {
+    await loadAwsStatus({ force: true, silent: true });
+    return;
+  }
+  if (key === 'billing_export') {
+    exportAwsSnapshotCsv();
+    return;
+  }
+  if (key === 'cloudfront_invalidations') {
+    const service = awsServiceByKey('cloudfront');
+    const distributionId = context.distributionId || service?.distribution_id || adminState.aws?.metadata?.configured_cloudfront_distribution_id || '';
+    try {
+      const invalidations = await loadAwsCloudFrontInvalidations(distributionId);
+      renderAwsCloudFrontInvalidations(service, invalidations);
+      setAwsLiveStatus(`Loaded ${invalidations.length} CloudFront invalidations.`);
+    } catch (error) {
+      showToast('CloudFront', error.message, 'error');
+    }
+    return;
+  }
+  if (key === 'cloudwatch_alarm_actions') {
+    setAwsSelectedService('cloudwatch');
+    setAwsDataView('alarms');
+    const service = awsServiceByKey('cloudwatch');
+    if (service) {
+      setAwsLiveStatus(`Showing CloudWatch alarms for ${service.log_group?.name || 'current log group'}.`);
+    }
+    return;
+  }
+  if (key === 'cloudfront_invalidation') {
+    openGuardModal({
+      action: 'aws_cloudfront_create_invalidation',
+      targetType: 'aws_cloudfront_distribution',
+      targetId: context.distributionId || awsServiceByKey('cloudfront')?.distribution_id || adminState.aws?.metadata?.configured_cloudfront_distribution_id || 'cloudfront',
+      title: 'Create CloudFront invalidation',
+      description: 'Invalidate the selected distribution cache. Provide a reason and confirm the guard flow.',
+      valueLabel: 'Paths',
+      valuePlaceholder: '/*',
+      value: '/*',
+      onConfirm: async (token, guard) => {
+        const paths = String(guard.value || '/*').split(',').map((item) => item.trim()).filter(Boolean);
+        const response = await apiFetch('/api/admin/aws/cloudfront/invalidation', {
+          method: 'POST',
+          headers: { 'X-Admin-Guard-Token': token },
+          body: JSON.stringify({ distribution_id: guard.targetId, paths, reason: guard.reason })
+        });
+        const data = await readResponse(response);
+        if (!response.ok || data.success === false) throw new Error(data.error || `Failed to create invalidation (${response.status})`);
+        showToast('CloudFront', 'Invalidation queued successfully.', 'success');
+        await loadAwsStatus({ force: true, silent: true });
+      }
+    });
+    return;
+  }
+  if (key === 'lambda_concurrency') {
+    openGuardModal({
+      action: 'aws_lambda_set_concurrency',
+      targetType: 'aws_lambda_function',
+      targetId: awsServiceByKey('lambda')?.function_name || adminState.aws?.metadata?.lambda_function || 'lambda',
+      title: 'Set Lambda reserved concurrency',
+      description: 'Set or remove reserved concurrency for the selected Lambda function. Provide a reason and confirm the guard flow.',
+      valueLabel: 'Concurrency',
+      valuePlaceholder: 'Leave blank to remove or enter a number',
+      value: String(safeNumber(awsServiceByKey('lambda')?.reserved_concurrency || 0) || ''),
+      onConfirm: async (token, guard) => {
+        const raw = String(guard.value || '').trim();
+        const response = await apiFetch('/api/admin/aws/lambda/concurrency', {
+          method: 'PATCH',
+          headers: { 'X-Admin-Guard-Token': token },
+          body: JSON.stringify({ function_name: guard.targetId, reserved_concurrency: raw ? safeNumber(raw, 0) : null, reason: guard.reason })
+        });
+        const data = await readResponse(response);
+        if (!response.ok || data.success === false) throw new Error(data.error || `Failed to set concurrency (${response.status})`);
+        showToast('Lambda', 'Concurrency updated successfully.', 'success');
+        await loadAwsStatus({ force: true, silent: true });
+      }
+    });
+    return;
+  }
+  if (key === 'cloudwatch_retention') {
+    openGuardModal({
+      action: 'aws_cloudwatch_set_retention',
+      targetType: 'aws_log_group',
+      targetId: awsServiceByKey('cloudwatch')?.log_group?.name || 'log-group',
+      title: 'Set CloudWatch retention',
+      description: 'Update log retention for the selected log group. Provide a reason and confirm the guard flow.',
+      valueLabel: 'Retention days',
+      valuePlaceholder: '30',
+      value: String(awsServiceByKey('cloudwatch')?.log_group?.retention_days || 30),
+      onConfirm: async (token, guard) => {
+        const response = await apiFetch('/api/admin/aws/logs/retention', {
+          method: 'PATCH',
+          headers: { 'X-Admin-Guard-Token': token },
+          body: JSON.stringify({ log_group_name: guard.targetId, retention_days: safeNumber(guard.value || 30, 30), reason: guard.reason })
+        });
+        const data = await readResponse(response);
+        if (!response.ok || data.success === false) throw new Error(data.error || `Failed to set retention (${response.status})`);
+        showToast('CloudWatch', 'Retention updated successfully.', 'success');
+        await loadAwsStatus({ force: true, silent: true });
+      }
+    });
+    return;
+  }
+  if (key === 'cloudwatch_alarm_toggle') {
+    openGuardModal({
+      action: 'aws_cloudwatch_toggle_alarm_actions',
+      targetType: 'aws_alarm',
+      targetId: context.alarm || 'alarm',
+      title: context.enabled === 'true' ? 'Enable alarm actions' : 'Disable alarm actions',
+      description: 'Toggle CloudWatch alarm actions for the selected alarm. Provide a reason and confirm the guard flow.',
+      valueLabel: 'Enabled',
+      valuePlaceholder: 'true / false',
+      value: context.enabled,
+      onConfirm: async (token, guard) => {
+        const enabled = String(guard.value || context.enabled || '').toLowerCase() !== 'false';
+        const response = await apiFetch(`/api/admin/aws/alarms/${encodeURIComponent(guard.targetId)}/actions`, {
+          method: 'POST',
+          headers: { 'X-Admin-Guard-Token': token },
+          body: JSON.stringify({ enabled, reason: guard.reason })
+        });
+        const data = await readResponse(response);
+        if (!response.ok || data.success === false) throw new Error(data.error || `Failed to toggle alarm actions (${response.status})`);
+        showToast('CloudWatch', 'Alarm actions updated successfully.', 'success');
+        await loadAwsStatus({ force: true, silent: true });
+      }
+    });
+    return;
+  }
+  if (key === 'cloudwatch_snooze') {
+    openGuardModal({
+      action: 'aws_cloudwatch_snooze',
+      targetType: 'aws_alarm',
+      targetId: context.alarm || 'alarm',
+      title: 'Snooze CloudWatch alarm',
+      description: 'Temporarily snooze the selected alarm. Provide a reason and confirm the guard flow.',
+      valueLabel: 'Minutes',
+      valuePlaceholder: '30',
+      value: '30',
+      onConfirm: async (token, guard) => {
+        const response = await apiFetch(`/api/admin/aws/alarms/${encodeURIComponent(guard.targetId)}/snooze`, {
+          method: 'POST',
+          headers: { 'X-Admin-Guard-Token': token },
+          body: JSON.stringify({ minutes: safeNumber(guard.value || 30, 30), reason: guard.reason })
+        });
+        const data = await readResponse(response);
+        if (!response.ok || data.success === false) throw new Error(data.error || `Failed to snooze alarm (${response.status})`);
+        showToast('CloudWatch', 'Alarm snoozed successfully.', 'success');
+        await loadAwsStatus({ force: true, silent: true });
+      }
+    });
+    return;
+  }
+  if (key === 'cloudwatch_unsnooze') {
+    openGuardModal({
+      action: 'aws_cloudwatch_unsnooze',
+      targetType: 'aws_alarm',
+      targetId: context.alarm || 'alarm',
+      title: 'Unsnooze CloudWatch alarm',
+      description: 'Resume the selected alarm from snooze. Provide a reason and confirm the guard flow.',
+      valueLabel: 'Confirm',
+      valuePlaceholder: 'type unsnooze',
+      value: 'unsnooze',
+      onConfirm: async (token, guard) => {
+        const response = await apiFetch(`/api/admin/aws/alarms/${encodeURIComponent(guard.targetId)}/snooze`, {
+          method: 'DELETE',
+          headers: { 'X-Admin-Guard-Token': token },
+          body: JSON.stringify({ reason: guard.reason })
+        });
+        const data = await readResponse(response);
+        if (!response.ok || data.success === false) throw new Error(data.error || `Failed to unsnooze alarm (${response.status})`);
+        showToast('CloudWatch', 'Alarm unsnoozed successfully.', 'success');
+        await loadAwsStatus({ force: true, silent: true });
+      }
+    });
+    return;
+  }
+  if (key === 's3_rescan') {
+    openGuardModal({
+      action: 'aws_s3_rescan',
+      targetType: 'aws_s3_bucket',
+      targetId: context.bucket || '',
+      title: 'Rescan S3 bucket',
+      description: 'Rescan bucket metadata and sampled object stats. Provide a reason and confirm the guard flow.',
+      valueLabel: 'Notes',
+      valuePlaceholder: 'Optional notes',
+      value: '',
+      onConfirm: async (token, guard) => {
+        const response = await apiFetch(`/api/admin/aws/s3/${encodeURIComponent(guard.targetId)}/rescan`, {
+          method: 'POST',
+          headers: { 'X-Admin-Guard-Token': token },
+          body: JSON.stringify({ reason: guard.reason })
+        });
+        const data = await readResponse(response);
+        if (!response.ok || data.success === false) throw new Error(data.error || `Failed to rescan bucket (${response.status})`);
+        showToast('S3', 'Bucket rescanned successfully.', 'success');
+        await loadAwsStatus({ force: true, silent: true });
+      }
+    });
+    return;
+  }
+  if (key === 's3_versioning') {
+    openGuardModal({
+      action: 'aws_s3_enable_versioning',
+      targetType: 'aws_s3_bucket',
+      targetId: context.bucket || '',
+      title: 'Enable S3 versioning',
+      description: 'Enable versioning for the selected bucket. Provide a reason and confirm the guard flow.',
+      valueLabel: 'Confirm',
+      valuePlaceholder: 'type enable',
+      value: 'enable',
+      onConfirm: async (token, guard) => {
+        const response = await apiFetch(`/api/admin/aws/s3/${encodeURIComponent(guard.targetId)}/versioning/enable`, {
+          method: 'POST',
+          headers: { 'X-Admin-Guard-Token': token },
+          body: JSON.stringify({ reason: guard.reason })
+        });
+        const data = await readResponse(response);
+        if (!response.ok || data.success === false) throw new Error(data.error || `Failed to enable versioning (${response.status})`);
+        showToast('S3', 'Versioning enabled successfully.', 'success');
+        await loadAwsStatus({ force: true, silent: true });
+      }
+    });
+    return;
+  }
+  if (key === 's3_encryption') {
+    openGuardModal({
+      action: 'aws_s3_enable_encryption',
+      targetType: 'aws_s3_bucket',
+      targetId: context.bucket || '',
+      title: 'Enable S3 encryption',
+      description: 'Enable encryption for the selected bucket. Provide a reason and confirm the guard flow.',
+      valueLabel: 'Confirm',
+      valuePlaceholder: 'type enable',
+      value: 'enable',
+      onConfirm: async (token, guard) => {
+        const response = await apiFetch(`/api/admin/aws/s3/${encodeURIComponent(guard.targetId)}/encryption/enable`, {
+          method: 'POST',
+          headers: { 'X-Admin-Guard-Token': token },
+          body: JSON.stringify({ reason: guard.reason })
+        });
+        const data = await readResponse(response);
+        if (!response.ok || data.success === false) throw new Error(data.error || `Failed to enable encryption (${response.status})`);
+        showToast('S3', 'Encryption enabled successfully.', 'success');
+        await loadAwsStatus({ force: true, silent: true });
+      }
+    });
+    return;
+  }
+  if (key === 'dynamo_refresh') {
+    try {
+      const response = await apiFetch(`/api/admin/aws/dynamodb/${encodeURIComponent(context.table || '')}/refresh`, { method: 'POST' });
+      const data = await readResponse(response);
+      if (!response.ok || data.success === false) throw new Error(data.error || `Failed to refresh DynamoDB stats (${response.status})`);
+      showToast('DynamoDB', 'Table stats refreshed.', 'success');
+      await loadAwsStatus({ force: true, silent: true });
+    } catch (error) {
+      showToast('DynamoDB', error.message, 'error');
+    }
+    return;
+  }
+  if (key === 'dynamo_deletion_protection') {
+    openGuardModal({
+      action: 'aws_dynamodb_toggle_deletion_protection',
+      targetType: 'aws_dynamodb_table',
+      targetId: context.table || '',
+      title: 'Toggle DynamoDB deletion protection',
+      description: 'Enable or disable deletion protection on the selected table. Provide a reason and confirm the guard flow.',
+      valueLabel: 'Enabled',
+      valuePlaceholder: 'true / false',
+      value: 'true',
+      onConfirm: async (token, guard) => {
+        const response = await apiFetch(`/api/admin/aws/dynamodb/${encodeURIComponent(guard.targetId)}/deletion-protection`, {
+          method: 'PATCH',
+          headers: { 'X-Admin-Guard-Token': token },
+          body: JSON.stringify({ enabled: String(guard.value || 'true').toLowerCase() !== 'false', reason: guard.reason })
+        });
+        const data = await readResponse(response);
+        if (!response.ok || data.success === false) throw new Error(data.error || `Failed to toggle deletion protection (${response.status})`);
+        showToast('DynamoDB', 'Deletion protection updated successfully.', 'success');
+        await loadAwsStatus({ force: true, silent: true });
+      }
+    });
+    return;
+  }
 }
 
 function formatDateOnly(value) {
@@ -588,236 +1530,65 @@ function renderAwsServicesPanel() {
   const aws = adminState.aws || {};
   const summary = aws.summary || {};
   const services = aws.services || {};
-  setText('awsSummaryStatus', String(summary.overall_status || '-').toUpperCase());
-  setText('awsSummaryHealthy', safeNumber(summary.healthy_services || 0));
-  setText('awsSummaryDegraded', safeNumber(summary.degraded_services || 0));
-  setText('awsSummaryUnavailable', safeNumber(summary.unavailable_services || 0));
+  setAwsStatusSummary(summary);
   setText('awsRegion', `Region: ${aws.region || '-'}`);
-  setText('awsCheckedAt', `Checked: ${formatDateTime(aws.checked_at)}`);
+  setText('awsCheckedAt', `Checked: ${formatDateTime(aws.checked_at || adminState.awsLastFetchedAt)}`);
+  setText('awsServiceCount', `${safeNumber(summary.total_services || 0)} services`);
+  setAwsLiveStatus(`AWS panel updated at ${formatDateTime(aws.checked_at || adminState.awsLastFetchedAt)}.`);
   renderAwsServiceChart(summary);
-
-  const cards = document.getElementById('awsServiceCards');
-  if (cards) {
-    const cardRows = Object.values(services).filter(Boolean);
-    if (!cardRows.length) renderEmpty(cards, 'No service checks yet', 'Refresh the panel to run AWS service checks.');
-    else {
-      const describeService = (service) => {
-        const key = String(service?.service || '').toLowerCase();
-        if (key === 'lambda') {
-          return `Req24h ${safeNumber(service.metrics_24h?.invocations || 0)} | Err ${safeNumber(service.metrics_24h?.errors || 0)} | Avg ${safeNumber(service.metrics_24h?.avg_duration_ms || 0).toFixed(2)}ms`;
-        }
-        if (key === 'cloudfront') {
-          return `Req24h ${safeNumber(service.metrics_24h?.requests || 0)} | Data ${formatBytes(service.metrics_24h?.bytes_downloaded || 0)} | 4xx ${safeNumber(service.metrics_24h?.avg_4xx_error_rate || 0).toFixed(4)}%`;
-        }
-        if (key === 'dynamodb') {
-          return `Tables ${safeNumber(service.summary?.total_tables || 0)} | Items ${safeNumber(service.summary?.total_items || 0)} | Storage ${formatBytes(service.summary?.total_size_bytes || 0)}`;
-        }
-        if (key === 's3') {
-          return `Buckets ${safeNumber(service.summary?.total_buckets || 0)} | Objects ${safeNumber(service.summary?.total_sampled_objects || 0)} | Sampled ${formatBytes(service.summary?.total_sampled_size_bytes || 0)}`;
-        }
-        if (key === 'cloudwatch') {
-          return `Alarms ${safeNumber(service.active_alarm_count || 0)} | Log storage ${formatBytes(service.log_group?.stored_bytes || 0)}`;
-        }
-        if (key === 'billing') {
-          return `MTD ${formatCurrency(service.month_to_date_total || 0, service.currency || 'USD')} | Forecast ${formatCurrency(service.forecast_month_total || 0, service.currency || 'USD')}`;
-        }
-        return '';
-      };
-      cards.innerHTML = cardRows.map((service) => `
-        <div class="summary-card">
-          <div class="flex items-center justify-between gap-2">
-            <div class="font-semibold text-white">${escapeHtml(String(service.service || '').toUpperCase())}</div>
-            ${badgeHtml(String(service.status || 'unknown').toUpperCase(), serviceTone(service.status))}
-          </div>
-          <div class="text-xs text-cyan-200/80 mt-1 break-all">${escapeHtml(describeService(service))}</div>
-          <div class="text-xs text-gray-400 mt-1 break-all">${escapeHtml(service.error || service.message || '')}</div>
-        </div>
-      `).join('');
-    }
-  }
-
-  const metadata = document.getElementById('awsMetadataDetails');
-  if (metadata) {
-    const info = aws.metadata || {};
-    metadata.innerHTML = `
-      <div><span class="text-gray-500">Project</span>: ${escapeHtml(info.project_name || '-')}</div>
-      <div><span class="text-gray-500">Stage</span>: ${escapeHtml(info.stage || '-')}</div>
-      <div><span class="text-gray-500">Lambda Function</span>: <span class="font-mono break-all">${escapeHtml(info.lambda_function || '-')}</span></div>
-      <div><span class="text-gray-500">Configured CF Domain</span>: ${escapeHtml(info.configured_cloudfront_domain || '-')}</div>
-      <div><span class="text-gray-500">Configured CF Dist ID</span>: <span class="font-mono break-all">${escapeHtml(info.configured_cloudfront_distribution_id || '-')}</span></div>
-    `;
-  }
-
-  const lambdaDetails = document.getElementById('awsLambdaDetails');
-  if (lambdaDetails) {
-    const lambda = services.lambda || {};
-    lambdaDetails.innerHTML = `
-      <div><span class="text-gray-500">Function</span>: <span class="font-mono">${escapeHtml(lambda.function_name || '-')}</span></div>
-      <div><span class="text-gray-500">Runtime</span>: ${escapeHtml(lambda.runtime || '-')}</div>
-      <div><span class="text-gray-500">Memory/Timeout</span>: ${escapeHtml(`${safeNumber(lambda.memory_size, 0)}MB / ${safeNumber(lambda.timeout_seconds, 0)}s`)}</div>
-      <div><span class="text-gray-500">Architectures</span>: ${escapeHtml((lambda.architectures || []).join(', ') || '-')}</div>
-      <div><span class="text-gray-500">Reserved concurrency</span>: ${escapeHtml(String(safeNumber(lambda.reserved_concurrency, 0)))}</div>
-      <div><span class="text-gray-500">State</span>: ${escapeHtml(lambda.state || lambda.status || '-')} (${escapeHtml(lambda.last_update_status || '-')})</div>
-      <div><span class="text-gray-500">Last Modified</span>: ${escapeHtml(formatDateTime(lambda.last_modified))}</div>
-      <div><span class="text-gray-500">Invocations (24h)</span>: ${escapeHtml(String(safeNumber(lambda.metrics_24h?.invocations || 0)))}</div>
-      <div><span class="text-gray-500">Errors / Throttles (24h)</span>: ${escapeHtml(`${safeNumber(lambda.metrics_24h?.errors || 0)} / ${safeNumber(lambda.metrics_24h?.throttles || 0)}`)}</div>
-      <div><span class="text-gray-500">Error Rate / Avg Duration</span>: ${escapeHtml(`${safeNumber(lambda.metrics_24h?.error_rate_percent || 0).toFixed(4)}% / ${safeNumber(lambda.metrics_24h?.avg_duration_ms || 0).toFixed(2)} ms`)}</div>
-      ${(lambda.metric_errors || []).map((err) => `<div class="text-amber-300">${escapeHtml(err)}</div>`).join('')}
-      ${lambda.error ? `<div class="text-rose-300">${escapeHtml(lambda.error)}</div>` : ''}
-    `;
-  }
-
-  const cloudFrontDetails = document.getElementById('awsCloudFrontDetails');
-  if (cloudFrontDetails) {
+  renderAwsServiceCards(services);
+  renderAwsMetadata(aws);
+  renderAwsInspector(aws);
+  renderAwsDataPanels(services);
+  if (getAwsSelectedServiceKey() === 'cloudfront') {
     const cloudfront = services.cloudfront || {};
-    cloudFrontDetails.innerHTML = `
-      <div><span class="text-gray-500">Distribution ID</span>: <span class="font-mono">${escapeHtml(cloudfront.distribution_id || '-')}</span></div>
-      <div><span class="text-gray-500">Domain</span>: ${escapeHtml(cloudfront.domain_name || '-')}</div>
-      <div><span class="text-gray-500">Deployment</span>: ${escapeHtml(cloudfront.deployment_status || cloudfront.status || '-')}</div>
-      <div><span class="text-gray-500">Lookup Method</span>: ${escapeHtml(cloudfront.lookup?.method || '-')}</div>
-      <div><span class="text-gray-500">Runtime Host</span>: ${escapeHtml(cloudfront.lookup?.runtime_host || '-')}</div>
-      <div><span class="text-gray-500">Aliases / Origins</span>: ${escapeHtml(`${safeNumber(cloudfront.aliases?.length || 0)} / ${safeNumber(cloudfront.origins?.length || 0)}`)}</div>
-      <div><span class="text-gray-500">Requests 24h</span>: ${escapeHtml(String(safeNumber(cloudfront.metrics_24h?.requests || 0)))}</div>
-      <div><span class="text-gray-500">4xx / 5xx avg</span>: ${escapeHtml(`${safeNumber(cloudfront.metrics_24h?.avg_4xx_error_rate || 0).toFixed(4)}% / ${safeNumber(cloudfront.metrics_24h?.avg_5xx_error_rate || 0).toFixed(4)}%`)}</div>
-      <div><span class="text-gray-500">Bytes Downloaded 24h</span>: ${escapeHtml(formatBytes(cloudfront.metrics_24h?.bytes_downloaded || 0))}</div>
-      <div><span class="text-gray-500">Probe</span>: ${escapeHtml(cloudfront.health_probe?.message || '-')}</div>
-      ${(cloudfront.metric_errors || []).map((err) => `<div class="text-amber-300">${escapeHtml(err)}</div>`).join('')}
-      ${cloudfront.error ? `<div class="text-rose-300">${escapeHtml(cloudfront.error)}</div>` : ''}
-    `;
+    const invalidationsWrap = document.getElementById('awsCloudFrontInvalidations');
+    if (invalidationsWrap) invalidationsWrap.innerHTML = '<div class="admin-empty">Loading CloudFront invalidations...</div>';
+    loadAwsCloudFrontInvalidations(cloudfront.distribution_id || aws.metadata?.configured_cloudfront_distribution_id || '')
+      .then((invalidations) => renderAwsCloudFrontInvalidations(cloudfront, invalidations))
+      .catch((error) => { if (invalidationsWrap) renderEmpty(invalidationsWrap, 'Unable to load invalidations', error.message); });
   }
-
-  const cloudWatchDetails = document.getElementById('awsCloudWatchDetails');
-  if (cloudWatchDetails) {
-    const cloudwatch = services.cloudwatch || {};
-    cloudWatchDetails.innerHTML = `
-      <div><span class="text-gray-500">Log Group</span>: <span class="font-mono">${escapeHtml(cloudwatch.log_group?.name || '-')}</span></div>
-      <div><span class="text-gray-500">Retention</span>: ${escapeHtml(cloudwatch.log_group?.retention_days ? `${cloudwatch.log_group.retention_days} days` : '-')}</div>
-      <div><span class="text-gray-500">Stored Bytes</span>: ${escapeHtml(String(safeNumber(cloudwatch.log_group?.stored_bytes || 0)))}</div>
-      <div><span class="text-gray-500">Active alarms</span>: ${escapeHtml(String(safeNumber(cloudwatch.active_alarm_count || 0)))}</div>
-      ${(cloudwatch.errors || []).map((err) => `<div class="text-rose-300">${escapeHtml(err)}</div>`).join('')}
-    `;
-  }
-
-  const alarmsContainer = document.getElementById('awsCloudWatchAlarms');
-  if (alarmsContainer) {
-    const alarms = (services.cloudwatch?.alarms || []);
-    if (!alarms.length) renderEmpty(alarmsContainer, 'No alarms returned', 'No CloudWatch alarms matched the current project prefix.');
-    else {
-      alarmsContainer.innerHTML = alarms.slice(0, 12).map((alarm) => `
-        <div class="summary-card">
-          <div class="flex items-center justify-between gap-2">
-            <div class="font-semibold text-white break-all">${escapeHtml(alarm.name || '-')}</div>
-            ${badgeHtml(String(alarm.state || 'unknown').toUpperCase(), serviceTone(String(alarm.state || '').toLowerCase() === 'alarm' ? 'degraded' : 'healthy'))}
-          </div>
-          <div class="text-xs text-gray-400 mt-1">${escapeHtml(alarm.reason || '')}</div>
-        </div>
-      `).join('');
-    }
-  }
-
-  const dynamoWrap = document.getElementById('awsDynamoTableWrap');
-  const dynamodb = services.dynamodb || {};
-  const dynamoTables = Array.isArray(dynamodb.tables) ? dynamodb.tables : [];
-  if (!dynamoTables.length) renderEmpty(dynamoWrap, 'No DynamoDB tables', 'No table diagnostics were returned by the API.');
-  else {
-    renderAwsTableWrap(dynamoWrap, `
-      <table class="admin-table">
-        <thead><tr><th>Table</th><th>Status</th><th>Items</th><th>Size</th><th>GSI</th><th>Billing / Class</th><th>Stream</th><th>Error</th></tr></thead>
-        <tbody>
-          ${dynamoTables.map((table) => `
-            <tr>
-              <td class="text-sm text-gray-300 font-mono break-all">${escapeHtml(table.name || '-')}</td>
-              <td>${badgeHtml(table.status || '-', serviceTone(table.healthy ? 'healthy' : 'degraded'))}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(String(safeNumber(table.item_count || 0)))}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(formatBytes(table.size_bytes || 0))}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(String(safeNumber(table.gsi_count || 0)))}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(`${table.billing_mode || '-'} / ${table.table_class || '-'}`)}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(table.stream_enabled ? (table.stream_view_type || 'Enabled') : 'Disabled')}</td>
-              <td class="text-xs text-rose-300">${escapeHtml(table.error || '')}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    `);
-  }
-
-  const s3Wrap = document.getElementById('awsS3TableWrap');
-  const s3Status = services.s3 || {};
-  const buckets = Array.isArray(s3Status.buckets) ? s3Status.buckets : [];
-  if (!buckets.length) renderEmpty(s3Wrap, 'No S3 buckets', 'No bucket diagnostics were returned by the API.');
-  else {
-    renderAwsTableWrap(s3Wrap, `
-      <table class="admin-table">
-        <thead><tr><th>Bucket</th><th>Status</th><th>Region</th><th>Versioning</th><th>Encryption</th><th>Sampled Objects</th><th>Sampled Size</th><th>Error</th></tr></thead>
-        <tbody>
-          ${buckets.map((bucket) => `
-            <tr>
-              <td class="text-sm text-gray-300 font-mono break-all">${escapeHtml(bucket.name || '-')}</td>
-              <td>${badgeHtml(bucket.status || '-', serviceTone(bucket.healthy ? 'healthy' : 'degraded'))}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(bucket.region || '-')}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(bucket.versioning || '-')}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(bucket.encryption || '-')}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(`${safeNumber(bucket.sampled_object_count || 0)}${bucket.sampled_listing_truncated ? '+' : ''}`)}</td>
-              <td class="text-sm text-gray-300">${escapeHtml(formatBytes(bucket.sampled_size_bytes || 0))}</td>
-              <td class="text-xs text-rose-300">${escapeHtml(bucket.error || bucket.sampled_listing_error || '')}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    `);
-  }
-
-  const billingDetails = document.getElementById('awsBillingDetails');
-  const billing = services.billing || {};
-  if (billingDetails) {
-    billingDetails.innerHTML = `
-      <div><span class="text-gray-500">Provider</span>: ${escapeHtml(billing.provider || '-')}</div>
-      <div><span class="text-gray-500">Month-to-date</span>: ${escapeHtml(formatCurrency(billing.month_to_date_total || 0, billing.currency || 'USD'))}</div>
-      <div><span class="text-gray-500">Forecast this month</span>: ${escapeHtml(formatCurrency(billing.forecast_month_total || 0, billing.currency || 'USD'))}</div>
-      <div><span class="text-gray-500">Period</span>: ${escapeHtml(`${billing.period_start || '-'} -> ${billing.period_end || '-'}`)}</div>
-      ${billing.error ? `<div class="text-rose-300">${escapeHtml(billing.error)}</div>` : ''}
-    `;
-  }
-  renderAwsBillingChart(billing);
-
-  const billingBreakdown = document.getElementById('awsBillingBreakdown');
-  if (billingBreakdown) {
-    const rows = Array.isArray(billing.service_breakdown) ? billing.service_breakdown : [];
-    if (!rows.length) renderEmpty(billingBreakdown, 'No billing breakdown', 'Cost Explorer breakdown is not available yet.');
-    else {
-      billingBreakdown.innerHTML = rows.map((row) => `
-        <div class="summary-card">
-          <div class="flex items-center justify-between gap-2">
-            <div class="text-sm text-gray-200 break-all">${escapeHtml(row.service || 'Unknown')}</div>
-            <div class="text-sm font-semibold text-white">${escapeHtml(formatCurrency(row.cost || 0, billing.currency || 'USD'))}</div>
-          </div>
-        </div>
-      `).join('');
-    }
-  }
-
+  syncAwsUiControls();
   lucide.createIcons();
 }
 
-async function loadAwsStatus({ force = false } = {}) {
-  if (adminState.aws && !force) {
+async function loadAwsStatus({ force = false, silent = false } = {}) {
+  const windowValue = getAwsWindowValue();
+  if (adminState.aws && !force && adminState.awsWindow === windowValue) {
     renderAwsServicesPanel();
+    scheduleAwsAutoRefresh();
     return adminState.aws;
   }
-  const cards = document.getElementById('awsServiceCards');
-  if (cards) renderEmpty(cards, 'Checking AWS services...', 'Collecting diagnostics from backend checks.');
-  try {
-    const response = await apiFetch('/api/admin/aws/services');
-    const data = await readResponse(response);
-    if (!response.ok || data.success === false) throw new Error(data.error || `Failed to load AWS services (${response.status})`);
-    adminState.aws = data.aws || data.data || {};
-    renderAwsServicesPanel();
-    return adminState.aws;
-  } catch (error) {
-    showToast('AWS Services', error.message, 'error');
-    if (cards) renderEmpty(cards, 'Unable to load AWS checks', error.message);
-    return null;
-  }
+  if (adminState.awsLoadingPromise) return adminState.awsLoadingPromise;
+
+  const promise = (async () => {
+    const cards = document.getElementById('awsServiceCards');
+    if (cards) renderEmpty(cards, 'Checking AWS services...', 'Collecting diagnostics from backend checks.');
+    setAwsPanelBusy(true);
+    try {
+      const response = await apiFetch(awsRefreshUrl());
+      const data = await readResponse(response);
+      if (!response.ok || data.success === false) throw new Error(data.error || `Failed to load AWS services (${response.status})`);
+      adminState.aws = data.aws || data.data || {};
+      adminState.awsWindow = windowValue;
+      adminState.awsLastFetchedAt = adminState.aws?.checked_at || nowIso();
+      renderAwsServicesPanel();
+      scheduleAwsAutoRefresh();
+      if (!silent) setAwsLiveStatus(`AWS services refreshed at ${formatDateTime(adminState.awsLastFetchedAt)}.`);
+      return adminState.aws;
+    } catch (error) {
+      showToast('AWS Services', error.message, 'error');
+      if (cards) renderEmpty(cards, 'Unable to load AWS checks', error.message);
+      setAwsLiveStatus(`AWS refresh failed: ${error.message}`);
+      return null;
+    } finally {
+      setAwsPanelBusy(false);
+      adminState.awsLoadingPromise = null;
+    }
+  })();
+
+  adminState.awsLoadingPromise = promise;
+  return promise;
 }
 
 function userFilterMatches(item) {
@@ -1141,7 +1912,7 @@ function exportAuditCsv() {
 }
 
 function openGuardModal(context) {
-  adminState.guard = { open: true, phase: 'confirm', action: context.action, targetType: context.targetType, targetId: context.targetId, reason: '', challengeId: '', challenge: '', guardToken: '' };
+  adminState.guard = { open: true, phase: 'confirm', action: context.action, targetType: context.targetType, targetId: context.targetId, reason: '', value: context.value || '', valueLabel: context.valueLabel || '', valuePlaceholder: context.valuePlaceholder || '', onConfirm: context.onConfirm || null, challengeId: '', challenge: '', guardToken: '' };
   const modal = document.getElementById('adminActionModal');
   const title = document.getElementById('adminActionTitle');
   const desc = document.getElementById('adminActionDescription');
@@ -1150,8 +1921,11 @@ function openGuardModal(context) {
   const challengeWrap = document.getElementById('adminActionChallengeWrap');
   const challenge = document.getElementById('adminActionChallenge');
   const challengeInput = document.getElementById('adminActionChallengeInput');
+  const valueWrap = document.getElementById('adminActionValueWrap');
+  const valueLabel = document.getElementById('adminActionValueLabel');
+  const valueInput = document.getElementById('adminActionValue');
   const primary = document.getElementById('adminActionPrimaryButton');
-  if (!modal || !title || !desc || !step || !reason || !challengeWrap || !challenge || !challengeInput || !primary) return;
+  if (!modal || !title || !desc || !step || !reason || !challengeWrap || !challenge || !challengeInput || !valueWrap || !valueLabel || !valueInput || !primary) return;
   title.textContent = context.title || 'Confirm Destructive Action';
   desc.textContent = context.description || 'This action is permanent or broadly disruptive. Provide a reason and complete the guard flow.';
   step.textContent = 'Step 1 of 2';
@@ -1159,6 +1933,10 @@ function openGuardModal(context) {
   challengeWrap.classList.add('hidden');
   challenge.textContent = '';
   challengeInput.value = '';
+  valueLabel.textContent = context.valueLabel || 'Value';
+  valueInput.value = context.value || '';
+  valueInput.placeholder = context.valuePlaceholder || '';
+  valueWrap.classList.toggle('hidden', !context.valueLabel);
   primary.disabled = false;
   primary.innerHTML = '<i data-lucide="shield-check" class="w-4 h-4"></i>Generate Guard Token';
   modal.style.display = 'flex';
@@ -1169,6 +1947,8 @@ function openGuardModal(context) {
 function closeGuardModal() {
   adminState.guard.open = false;
   const modal = document.getElementById('adminActionModal');
+  const valueWrap = document.getElementById('adminActionValueWrap');
+  if (valueWrap) valueWrap.classList.add('hidden');
   if (modal) modal.style.display = 'none';
 }
 
@@ -1180,8 +1960,10 @@ async function runGuardFlow() {
   const challenge = document.getElementById('adminActionChallenge');
   const step = document.getElementById('adminActionStepLabel');
   const primary = document.getElementById('adminActionPrimaryButton');
-  if (!reason || !challengeInput || !challengeWrap || !challenge || !step || !primary) return null;
+  const valueInput = document.getElementById('adminActionValue');
+  if (!reason || !challengeInput || !challengeWrap || !challenge || !step || !primary || !valueInput) return null;
   guard.reason = reason.value.trim();
+  guard.value = valueInput.value.trim();
   if (!guard.reason) {
     showToast('Guard', 'Reason is required.', 'warning');
     return null;
@@ -1225,7 +2007,6 @@ async function runGuardFlow() {
     if (!response.ok || data.success === false) throw new Error(data.error || `Failed to verify guard (${response.status})`);
     guard.guardToken = data.guardToken || data.token || data.guard_token || '';
     if (!guard.guardToken) throw new Error('Guard token was not issued by the server.');
-    closeGuardModal();
     return guard.guardToken;
   } catch (error) {
     primary.disabled = false;
@@ -1380,17 +2161,74 @@ function bindEvents() {
   document.getElementById('auditCsvButton')?.addEventListener('click', exportAuditCsv);
   document.getElementById('inspectEntityButton')?.addEventListener('click', () => inspectEntity(document.getElementById('entityLookup')?.value || ''));
   document.getElementById('copyEntityJsonButton')?.addEventListener('click', copyEntityJson);
+  document.getElementById('awsRefreshButton')?.addEventListener('click', () => loadAwsStatus({ force: true }));
+  document.getElementById('awsExportSnapshotButton')?.addEventListener('click', exportAwsSnapshotCsv);
+  document.getElementById('awsBillingExportButton')?.addEventListener('click', exportAwsSnapshotCsv);
+  document.getElementById('awsAutoRefreshSelect')?.addEventListener('change', (event) => {
+    setAwsUiSetting('autoRefresh', event.target.value);
+    scheduleAwsAutoRefresh();
+  });
+  document.getElementById('awsTimeRangeSelect')?.addEventListener('change', (event) => {
+    setAwsUiSetting('window', event.target.value);
+    loadAwsStatus({ force: true });
+  });
+  document.getElementById('awsDensityToggle')?.addEventListener('click', () => {
+    const next = getAwsDensityValue() === 'compact' ? 'comfortable' : 'compact';
+    setAwsUiSetting('density', next);
+    document.body.classList.toggle('aws-density-compact', next === 'compact');
+    syncAwsUiControls();
+    renderAwsServicesPanel();
+  });
+  document.getElementById('awsDataTabs')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-aws-data-view]');
+    if (button) setAwsDataView(button.dataset.awsDataView);
+  });
+  document.getElementById('awsPanel')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-aws-action]');
+    if (button && event.currentTarget.contains(button)) {
+      event.preventDefault();
+      await handleAwsAction(button.dataset.awsAction, {
+        service: button.dataset.awsService,
+        key: button.dataset.awsService,
+        bucket: button.dataset.awsBucket,
+        table: button.dataset.awsTable,
+        alarm: button.dataset.awsAlarm,
+        enabled: button.dataset.awsEnabled,
+        distributionId: button.dataset.awsDistributionId
+      });
+      return;
+    }
+    const card = event.target.closest('[data-aws-select-service]');
+    if (card && event.currentTarget.contains(card)) {
+      setAwsSelectedService(card.dataset.awsSelectService || 'lambda');
+    }
+  });
+  document.getElementById('awsPanel')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (event.target.closest('[data-aws-action]')) return;
+    const card = event.target.closest('[data-aws-select-service]');
+    if (!card) return;
+    event.preventDefault();
+    setAwsSelectedService(card.dataset.awsSelectService || 'lambda');
+  });
   document.getElementById('adminActionPrimaryButton')?.addEventListener('click', async () => {
     const token = await runGuardFlow();
     if (!token) return;
+    const guard = { ...adminState.guard };
     try {
-      await destroyEntity(adminState.guard.targetType, adminState.guard.targetId);
-      await Promise.allSettled([loadOverview({ force: true }), adminState.guard.targetType === 'user' ? loadUsers({ force: true }) : loadWorkspaces({ force: true }), loadAudit({ force: true })]);
-      closeGuardModal();
+      if (typeof guard.onConfirm === 'function') {
+        await guard.onConfirm(token, guard);
+        closeGuardModal();
+      } else {
+        await destroyEntity(guard.targetType, guard.targetId);
+        await Promise.allSettled([loadOverview({ force: true }), guard.targetType === 'user' ? loadUsers({ force: true }) : loadWorkspaces({ force: true }), loadAudit({ force: true })]);
+        closeGuardModal();
+      }
     } catch (error) {
       showToast('Admin', error.message, 'error');
     } finally {
       adminState.guard.guardToken = '';
+      adminState.guard.onConfirm = null;
     }
   });
   document.querySelectorAll('[data-close-admin-modal]').forEach((button) => button.addEventListener('click', closeGuardModal));
@@ -1410,6 +2248,10 @@ function bindEvents() {
   document.getElementById('entityLookup')?.addEventListener('input', filterAndRenderEntityTargets);
   document.getElementById('entityLookup')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); inspectEntity(event.currentTarget.value || ''); } });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeGuardModal(); });
+  document.addEventListener('visibilitychange', scheduleAwsAutoRefresh);
+  window.addEventListener('beforeunload', () => {
+    if (adminState.awsAutoRefreshTimer) clearTimeout(adminState.awsAutoRefreshTimer);
+  });
 }
 
 async function bootstrapAdmin() {
@@ -1421,6 +2263,7 @@ async function bootstrapAdmin() {
   }
   const isCollapsed = JSON.parse(localStorage.getItem('sidebarCollapsed') || 'false');
   if (isCollapsed) document.querySelector('.sidebar')?.classList.add('collapsed');
+  syncAwsUiControls();
   bindEvents();
   setPanelActive('overview');
   await Promise.allSettled([loadOverview({ force: true }), loadAwsStatus({ force: true }), loadUsers({ force: true }), loadWorkspaces({ force: true }), loadAudit({ force: true })]);
