@@ -1,19 +1,3 @@
-function parseCloudFrontHostMap(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return Object.fromEntries(
-      Object.entries(parsed)
-        .map(([host, distributionId]) => [String(host || '').trim().toLowerCase(), String(distributionId || '').trim()])
-        .filter(([host, distributionId]) => host && distributionId)
-    );
-  } catch {
-    return {};
-  }
-}
-
 export const config = {
   appName: process.env.APP_NAME || 'code_protector_aws',
   port: Number(process.env.PORT || 3001),
@@ -30,12 +14,7 @@ export const config = {
     projectName: process.env.PROJECT_NAME || '',
     functionName: process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.API_FUNCTION_NAME || '',
     cloudFrontDistributionId: process.env.CLOUDFRONT_DISTRIBUTION_ID || '',
-    cloudFrontDomainName: process.env.CLOUDFRONT_DOMAIN_NAME || '',
-    cloudFrontHostDistributionMap: parseCloudFrontHostMap(
-      process.env.CLOUDFRONT_HOST_DISTRIBUTION_MAP
-      || process.env.AWS_CLOUDFRONT_HOST_MAP
-      || ''
-    )
+    cloudFrontDomainName: process.env.CLOUDFRONT_DOMAIN_NAME || ''
   },
   tables: {
     users: process.env.DDB_TABLE_USERS || process.env.DDB_USERS_TABLE || 'users',

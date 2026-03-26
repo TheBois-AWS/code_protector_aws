@@ -28,9 +28,6 @@ Parameters:
   LambdaTimeout:
     Type: Number
     Default: 30
-  CloudFrontHostDistributionMapJson:
-    Type: String
-    Default: ''
   LambdaLogRetentionDays:
     Type: Number
     Default: 30
@@ -175,7 +172,6 @@ Resources:
                   - dynamodb:Query
                   - dynamodb:Scan
                   - dynamodb:DescribeTable
-                  - dynamodb:UpdateTable
                 Resource:
                   - !GetAtt UsersTable.Arn
                   - !GetAtt WorkspacesTable.Arn
@@ -219,8 +215,6 @@ Resources:
                   - s3:GetBucketLocation
                   - s3:GetBucketVersioning
                   - s3:GetEncryptionConfiguration
-                  - s3:PutBucketVersioning
-                  - s3:PutEncryptionConfiguration
                 Resource:
                   - !GetAtt ContentBucket.Arn
                   - !GetAtt FrontendBucket.Arn
@@ -232,37 +226,18 @@ Resources:
               - Effect: Allow
                 Action:
                   - lambda:GetFunctionConfiguration
-                  - lambda:GetFunctionConcurrency
-                  - lambda:PutFunctionConcurrency
-                  - lambda:DeleteFunctionConcurrency
                 Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${Stage}-api'
               - Effect: Allow
                 Action:
+                  - cloudfront:GetDistribution
                   - cloudfront:ListDistributions
                 Resource: '*'
-              - Effect: Allow
-                Action:
-                  - cloudfront:GetDistribution
-                  - cloudfront:CreateInvalidation
-                  - cloudfront:GetInvalidation
-                  - cloudfront:ListInvalidations
-                Resource: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*'
               - Effect: Allow
                 Action:
                   - cloudwatch:DescribeAlarms
                   - cloudwatch:GetMetricStatistics
                   - logs:DescribeLogGroups
                 Resource: '*'
-              - Effect: Allow
-                Action:
-                  - cloudwatch:EnableAlarmActions
-                  - cloudwatch:DisableAlarmActions
-                Resource: !Sub 'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ProjectName}-${Stage}-api-*'
-              - Effect: Allow
-                Action:
-                  - logs:PutRetentionPolicy
-                  - logs:DeleteRetentionPolicy
-                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Stage}-api*'
               - Effect: Allow
                 Action:
                   - ce:GetCostAndUsage
@@ -306,7 +281,6 @@ Resources:
           DDB_TABLE_ADMIN_AUDIT: !Ref AdminAuditTable
           DDB_INDEX_ADMIN_AUDIT_BY_ACTOR: ActorIndex
           DDB_INDEX_ADMIN_AUDIT_BY_TARGET: TargetIndex
-          CLOUDFRONT_HOST_DISTRIBUTION_MAP: !Ref CloudFrontHostDistributionMapJson
           WS_API_ENDPOINT: !Sub 'https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
 
   ApiFunctionLogGroup:
