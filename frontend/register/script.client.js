@@ -193,20 +193,32 @@ function initPasswordUx() {
 
 initPasswordUx();
 
+async function validateStoredSession(token) {
+  try {
+    const [tokenRes, cookieRes] = await Promise.all([
+      fetch('/api/user/profile', {
+        headers: { Authorization: token },
+        cache: 'no-store'
+      }),
+      fetch('/api/user/profile', {
+        cache: 'no-store'
+      })
+    ]);
+    return tokenRes.ok && cookieRes.ok;
+  } catch (err) {
+    console.error('Profile check failed:', err);
+    return false;
+  }
+}
+
 (async () => {
   const token = localStorage.getItem('token');
   if (!token) return;
 
-  try {
-    const res = await fetch('/api/user/profile', {
-      headers: { Authorization: token }
-    });
-    if (res.ok) {
-      redirectAfterAuthSuccess(returnToTarget);
-      return;
-    }
-  } catch (err) {
-    console.error('Profile check failed:', err);
+  const validSession = await validateStoredSession(token);
+  if (validSession) {
+    redirectAfterAuthSuccess(returnToTarget);
+    return;
   }
 
   localStorage.removeItem('token');
