@@ -7,7 +7,7 @@ import { nowIso, randomId, sortByDateDesc } from '../utils/common.js';
 import { storage } from '../services/storage.js';
 import { getWorkspaceAccess, hasPermission, listWorkspaceLogs, listWorkspaceMembers, listWorkspaceProjects, resolveWorkspace } from '../utils/workspace.js';
 import { config } from '../config.js';
-import { broadcastAdminEvent, broadcastUserEvent, broadcastWorkspaceEvent } from '../utils/realtime.js';
+import { broadcastUserEvent, broadcastWorkspaceEvent } from '../utils/realtime.js';
 
 export async function logAction(workspaceId, action, details, request, country = 'Unknown') {
   const logEntry = {
@@ -164,12 +164,6 @@ export async function createWorkspace(request) {
     action: 'create',
     workspace: sanitizeWorkspace(workspace)
   });
-  await broadcastAdminEvent('WORKSPACE_CREATED', {
-    workspace_id: String(workspace.id),
-    owner_user_id: String(userId),
-    name: String(workspace.name || ''),
-    status: String(workspace.status || 'active')
-  });
   return jsonResponse(200, { success: true, workspace: sanitizeWorkspace(workspace) });
 }
 
@@ -266,11 +260,6 @@ export async function updateWorkspaceSettings(request, identifier) {
     default_script_id: updated.default_script_id || null,
     discord_webhook: updated.discord_webhook || ''
   });
-  await broadcastAdminEvent('WORKSPACE_SETTINGS_UPDATED', {
-    workspace_id: String(workspace.id),
-    default_project_id: updated.default_project_id || null,
-    default_script_id: updated.default_script_id || null
-  });
   return jsonResponse(200, { success: true, workspace: sanitizeWorkspace(updated) });
 }
 
@@ -286,11 +275,6 @@ export async function deleteWorkspace(request, identifier) {
   await broadcastUserEvent(userId, 'WORKSPACE_UPDATE', {
     action: 'delete',
     id: String(workspace.id)
-  });
-  await broadcastAdminEvent('WORKSPACE_DELETED', {
-    workspace_id: String(workspace.id),
-    owner_user_id: String(workspace.user_id || ''),
-    source: systemAdmin ? 'system_admin' : 'owner'
   });
   return jsonResponse(200, { success: true });
 }
@@ -341,10 +325,6 @@ export async function setWorkspacePin(request, identifier) {
     pin_enabled: 1
   });
   await logAction(workspace.id, 'SET_PIN', 'Workspace PIN protection enabled', request);
-  await broadcastAdminEvent('WORKSPACE_PIN_UPDATED', {
-    workspace_id: String(workspace.id),
-    pin_enabled: true
-  });
   return jsonResponse(200, { success: true, message: 'PIN set successfully' });
 }
 
@@ -393,9 +373,5 @@ export async function removeWorkspacePin(request, identifier) {
     await pinVerificationsRepo.delete(String(pin.token));
   }
   await logAction(workspace.id, 'REMOVE_PIN', 'Workspace PIN protection disabled', request);
-  await broadcastAdminEvent('WORKSPACE_PIN_UPDATED', {
-    workspace_id: String(workspace.id),
-    pin_enabled: false
-  });
   return jsonResponse(200, { success: true, message: 'PIN removed successfully' });
 }
