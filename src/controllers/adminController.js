@@ -1,19 +1,17 @@
 import { jsonResponse, parseJsonBody } from '../utils/http.js';
 import { hashPassword, requireSystemAdmin } from '../utils/auth.js';
-import { checkRateLimit } from '../utils/rateLimit.js';
 import { adminAuditRepo, accessListsRepo, appConfigRepo, licensesRepo, logsRepo, projectFilesRepo, projectsRepo, rateLimitsRepo, usersRepo, websocketConnectionsRepo, workspaceInvitationsRepo, workspaceMembersRepo, workspacesRepo } from '../services/repositories.js';
 import { nowIso, randomId, sortByDateDesc } from '../utils/common.js';
 import { broadcastAdminEvent } from '../utils/realtime.js';
 import { destroyWorkspaceData } from './workspaceController.js';
 import { config } from '../config.js';
 import { cloudFrontClient, cloudWatchClient, cloudWatchGlobalClient, cloudWatchLogsClient, costExplorerClient, ddbClient, lambdaClient, s3 } from '../services/aws.js';
-import { DescribeTableCommand, UpdateTableCommand } from '@aws-sdk/client-dynamodb';
-import { GetBucketEncryptionCommand, GetBucketLocationCommand, GetBucketVersioningCommand, HeadBucketCommand, ListObjectsV2Command, PutBucketEncryptionCommand, PutBucketVersioningCommand } from '@aws-sdk/client-s3';
-import { DeleteFunctionConcurrencyCommand, GetFunctionConcurrencyCommand, GetFunctionConfigurationCommand, PutFunctionConcurrencyCommand } from '@aws-sdk/client-lambda';
-import { CreateInvalidationCommand, GetDistributionCommand, GetInvalidationCommand, ListDistributionsCommand, ListInvalidationsCommand } from '@aws-sdk/client-cloudfront';
-import { DescribeAlarmsCommand, DisableAlarmActionsCommand, EnableAlarmActionsCommand, GetMetricStatisticsCommand } from '@aws-sdk/client-cloudwatch';
+import { DescribeTableCommand } from '@aws-sdk/client-dynamodb';
+import { GetBucketEncryptionCommand, GetBucketLocationCommand, GetBucketVersioningCommand, HeadBucketCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { GetFunctionConfigurationCommand } from '@aws-sdk/client-lambda';
+import { GetDistributionCommand, ListDistributionsCommand } from '@aws-sdk/client-cloudfront';
+import { DescribeAlarmsCommand, GetMetricStatisticsCommand } from '@aws-sdk/client-cloudwatch';
 import { DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
-import { PutRetentionPolicyCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { GetCostAndUsageCommand, GetCostForecastCommand } from '@aws-sdk/client-cost-explorer';
 
 const GUARD_CHALLENGE_PREFIX = 'admin_guard_challenge:';
@@ -317,392 +315,6 @@ function formatAwsError(error) {
   return [code, message].filter(Boolean).join(': ');
 }
 
-function getAwsErrorStatusCode(error) {
-  const code = normalizeLower(error?.name || error?.code || '');
-  if (!code) return 500;
-  if (code.includes('accessdenied') || code.includes('notauthorized') || code.includes('unauthorized')) return 403;
-  if (code.includes('notfound') || code.includes('nosuch') || code.includes('resourcenotfound')) return 404;
-  if (code.includes('throttl') || code.includes('limitexceeded') || code.includes('too many')) return 429;
-  return 500;
-}
-
-function isLikelyNotFoundError(message) {
-  const text = normalizeLower(message);
-  return text.includes('notfound')
-    || text.includes('no such')
-    || text.includes('resource not found')
-    || text.includes('resourcenotfound')
-    || text.includes('table not found')
-    || text.includes('bucket not found');
-}
-
-const AWS_ADMIN_RATE_LIMITS = {
-  read: { windowSeconds: 60, max: 60 },
-  mutate: { windowSeconds: 60, max: 10 },
-  highImpact: { windowSeconds: 600, max: 3 }
-};
-
-function decodePathParam(value) {
-  const text = normalizeText(value);
-  if (!text) return '';
-  try {
-    return decodeURIComponent(text);
-  } catch {
-    return text;
-  }
-}
-
-function buildRateLimitKey(scope, userId, extra = '') {
-  return `admin-aws:${scope}:user:${String(userId)}${extra ? `:${extra}` : ''}`;
-}
-
-async function enforceAwsRateLimit(request, scope, bucket = 'read', extra = '') {
-  const auth = await requireAdmin(request);
-  if (!auth.ok) return auth.response;
-  const limits = AWS_ADMIN_RATE_LIMITS[bucket] || AWS_ADMIN_RATE_LIMITS.read;
-  const rateLimit = await checkRateLimit(buildRateLimitKey(scope, auth.user.id, extra), limits.windowSeconds, limits.max);
-  if (!rateLimit.allowed) {
-    return jsonResponse(429, {
-      success: false,
-      error: 'Too many requests',
-      retry_after_seconds: rateLimit.retryAfterSeconds
-    });
-  }
-  return { ok: true, auth };
-}
-
-function parseAwsWindow(value) {
-  const window = normalizeLower(value || '24h');
-  if (window === '1h') {
-    return { window: '1h', startTime: new Date(Date.now() - 60 * 60 * 1000), period: 300 };
-  }
-  if (window === '7d') {
-    return { window: '7d', startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), period: 3600 };
-  }
-  if (window === '30d') {
-    return { window: '30d', startTime: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), period: 21600 };
-  }
-  return { window: '24h', startTime: new Date(Date.now() - 24 * 60 * 60 * 1000), period: 900 };
-}
-
-function resolveMappedDistributionIdByHost(...hosts) {
-  const map = config.aws?.cloudFrontHostDistributionMap || {};
-  for (const host of hosts) {
-    const normalizedHost = normalizeLower(normalizeHost(host));
-    if (!normalizedHost) continue;
-    const mapped = normalizeText(map[normalizedHost]);
-    if (mapped) {
-      return { distributionId: mapped, host: normalizedHost };
-    }
-  }
-  return null;
-}
-
-function getAwsRequestId(request) {
-  return normalizeText(
-    request?.requestContext?.requestId
-      || request?.requestContext?.request_id
-      || request?.headers?.['x-amzn-requestid']
-      || request?.headers?.['x-amz-request-id']
-  );
-}
-
-async function extractRequestBody(request) {
-  return parseJsonBody(request) || {};
-}
-
-function normalizeAwsPaths(paths = []) {
-  return [...new Set((Array.isArray(paths) ? paths : [paths])
-    .map((path) => normalizeText(path))
-    .filter(Boolean)
-    .map((path) => (path.startsWith('/') ? path : `/${path}`)))]
-    .slice(0, 100);
-}
-
-function normalizeRetentionDays(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1) return null;
-  return Math.min(3653, Math.max(1, Math.floor(parsed)));
-}
-
-function normalizeConcurrencyValue(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return undefined;
-  return Math.max(0, Math.floor(parsed));
-}
-
-function buildCloudFrontInvalidationSummary(invalidation = {}) {
-  const paths = invalidation.Paths || {};
-  return {
-    id: normalizeText(invalidation.Id),
-    status: normalizeText(invalidation.Status),
-    create_time: invalidation.CreateTime ? new Date(invalidation.CreateTime).toISOString() : null,
-    caller_reference: normalizeText(invalidation.CallerReference),
-    paths_count: Number(paths.Quantity || 0),
-    paths: paths.Items || []
-  };
-}
-
-function buildAlarmSnoozeKey(alarmName) {
-  return `admin_aws_alarm_snooze:${normalizeText(alarmName)}`;
-}
-
-async function readAlarmSnooze(alarmName) {
-  const raw = await appConfigRepo.get(buildAlarmSnoozeKey(alarmName));
-  if (!raw) return null;
-  try {
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (parsed?.expires_at && Number(parsed.expires_at) <= Date.now()) {
-      await appConfigRepo.delete(buildAlarmSnoozeKey(alarmName));
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function resolveCloudFrontDistributionContext(request, requestedDistributionId = '') {
-  const queryDistributionId = normalizeText(request?.query?.distribution_id || request?.query?.distributionId || '');
-  const explicitDistributionId = normalizeText(requestedDistributionId || queryDistributionId);
-  if (explicitDistributionId) {
-    return {
-      distributionId: explicitDistributionId,
-      source: 'request',
-      inspection: null
-    };
-  }
-
-  const mapped = resolveMappedDistributionIdByHost(
-    request?.headers?.['x-forwarded-host'],
-    request?.headers?.['X-Forwarded-Host'],
-    request?.headers?.host,
-    request?.headers?.Host
-  );
-  if (mapped?.distributionId) {
-    return {
-      distributionId: mapped.distributionId,
-      source: 'host_map',
-      inspection: null
-    };
-  }
-
-  const configuredDistributionId = normalizeText(config.aws.cloudFrontDistributionId);
-  if (configuredDistributionId) {
-    return {
-      distributionId: configuredDistributionId,
-      source: 'config',
-      inspection: null
-    };
-  }
-
-  const inspection = await inspectCloudFrontService(request?.headers || {});
-  return {
-    distributionId: normalizeText(inspection?.distribution_id),
-    source: 'resolved',
-    inspection
-  };
-}
-
-async function inspectSingleS3Bucket(bucketName) {
-  const name = normalizeText(bucketName);
-  if (!name) {
-    return {
-      name: '',
-      status: 'ERROR',
-      error: 'Bucket name required',
-      healthy: false
-    };
-  }
-
-  try {
-    await s3.send(new HeadBucketCommand({ Bucket: name }));
-    const [location, versioning, encryption, listing] = await Promise.allSettled([
-      s3.send(new GetBucketLocationCommand({ Bucket: name })),
-      s3.send(new GetBucketVersioningCommand({ Bucket: name })),
-      s3.send(new GetBucketEncryptionCommand({ Bucket: name })),
-      s3.send(new ListObjectsV2Command({ Bucket: name, MaxKeys: 1000 }))
-    ]);
-    const locationValue = location.status === 'fulfilled'
-      ? normalizeText(location.value?.LocationConstraint || 'us-east-1')
-      : '';
-    const versioningValue = versioning.status === 'fulfilled'
-      ? normalizeText(versioning.value?.Status || 'Disabled')
-      : 'Unknown';
-    const encryptionEnabled = encryption.status === 'fulfilled';
-    const listedObjects = listing.status === 'fulfilled' ? (listing.value?.Contents || []) : [];
-    const sampledSizeBytes = listedObjects.reduce((sum, object) => sum + Number(object?.Size || 0), 0);
-    const listingError = listing.status === 'rejected' ? formatAwsError(listing.reason) : '';
-    return {
-      name,
-      status: 'ACTIVE',
-      region: locationValue || config.aws.region,
-      versioning: versioningValue,
-      encryption: encryptionEnabled ? 'Enabled' : 'Not configured',
-      sampled_object_count: listedObjects.length,
-      sampled_size_bytes: sampledSizeBytes,
-      sampled_listing_truncated: listing.status === 'fulfilled' ? Boolean(listing.value?.IsTruncated) : false,
-      sampled_listing_error: listingError,
-      healthy: true
-    };
-  } catch (error) {
-    return {
-      name,
-      status: 'ERROR',
-      error: formatAwsError(error),
-      healthy: false
-    };
-  }
-}
-
-async function inspectSingleDynamoTable(tableName) {
-  const name = normalizeText(tableName);
-  if (!name) {
-    return {
-      name: '',
-      status: 'ERROR',
-      error: 'Table name required',
-      healthy: false
-    };
-  }
-  try {
-    const result = await ddbClient.send(new DescribeTableCommand({ TableName: name }));
-    const table = result?.Table || {};
-    return {
-      name,
-      status: normalizeText(table.TableStatus || 'UNKNOWN'),
-      item_count: Number(table.ItemCount || 0),
-      size_bytes: Number(table.TableSizeBytes || 0),
-      billing_mode: normalizeText(table.BillingModeSummary?.BillingMode || 'PAY_PER_REQUEST'),
-      table_class: normalizeText(table.TableClassSummary?.TableClass || 'STANDARD'),
-      stream_enabled: Boolean(table.StreamSpecification?.StreamEnabled),
-      stream_view_type: normalizeText(table.StreamSpecification?.StreamViewType || ''),
-      deletion_protection_enabled: Boolean(table.DeletionProtectionEnabled),
-      gsi_count: Array.isArray(table.GlobalSecondaryIndexes) ? table.GlobalSecondaryIndexes.length : 0,
-      arn: normalizeText(table.TableArn),
-      healthy: normalizeLower(table.TableStatus) === 'active'
-    };
-  } catch (error) {
-    return {
-      name,
-      status: 'ERROR',
-      error: formatAwsError(error),
-      healthy: false
-    };
-  }
-}
-
-async function getAwsLambdaConfig(functionName = normalizeText(config.aws.functionName)) {
-  if (!functionName) {
-    return {
-      service: 'lambda',
-      status: 'unavailable',
-      error: 'AWS_LAMBDA_FUNCTION_NAME is not available in current runtime'
-    };
-  }
-
-  const [configurationResult, concurrencyResult] = await Promise.allSettled([
-    lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: functionName })),
-    lambdaClient.send(new GetFunctionConcurrencyCommand({ FunctionName: functionName }))
-  ]);
-
-  if (configurationResult.status === 'rejected') {
-    return {
-      service: 'lambda',
-      status: 'unavailable',
-      function_name: functionName,
-      error: formatAwsError(configurationResult.reason)
-    };
-  }
-
-  const configResult = configurationResult.value || {};
-  const reservedConcurrency = concurrencyResult.status === 'fulfilled'
-    ? Number(concurrencyResult.value?.ReservedConcurrentExecutions ?? 0)
-    : null;
-  const concurrency = concurrencyResult.status === 'fulfilled'
-    ? {
-        reserved_concurrency: reservedConcurrency,
-        status: 'configured'
-      }
-    : {
-        reserved_concurrency: null,
-        status: 'unconfigured',
-        error: formatAwsError(concurrencyResult.reason)
-      };
-
-  return {
-    service: 'lambda',
-    status: 'healthy',
-    function_name: functionName,
-    runtime: normalizeText(configResult?.Runtime),
-    memory_size: Number(configResult?.MemorySize || 0),
-    timeout_seconds: Number(configResult?.Timeout || 0),
-    architectures: configResult?.Architectures || [],
-    reserved_concurrency: reservedConcurrency,
-    state: normalizeText(configResult?.State || 'Unknown'),
-    last_update_status: normalizeText(configResult?.LastUpdateStatus || 'Unknown'),
-    last_modified: normalizeText(configResult?.LastModified),
-    version: normalizeText(configResult?.Version),
-    concurrency
-  };
-}
-
-async function requireAwsMutation(request, {
-  rateScope,
-  rateBucket = 'mutate',
-  rateExtra = '',
-  action,
-  targetType,
-  targetId,
-  guardRequired = false,
-  guardAction = action,
-  guardTargetType = targetType,
-  guardTargetId = targetId
-}) {
-  const auth = await requireAdmin(request);
-  if (!auth.ok) return { ok: false, response: auth.response };
-  const rateLimit = await checkRateLimit(
-    buildRateLimitKey(rateScope, auth.user.id, rateExtra),
-    AWS_ADMIN_RATE_LIMITS[rateBucket]?.windowSeconds || AWS_ADMIN_RATE_LIMITS.mutate.windowSeconds,
-    AWS_ADMIN_RATE_LIMITS[rateBucket]?.max || AWS_ADMIN_RATE_LIMITS.mutate.max
-  );
-  if (!rateLimit.allowed) {
-    return {
-      ok: false,
-      response: jsonResponse(429, {
-        success: false,
-        error: 'Too many requests',
-        retry_after_seconds: rateLimit.retryAfterSeconds
-      })
-    };
-  }
-
-  const payload = await extractRequestBody(request);
-  const reason = normalizeText(payload.reason);
-  if (!reason) {
-    return { ok: false, response: jsonResponse(400, { success: false, error: 'Reason required' }) };
-  }
-
-  let guard = null;
-  if (guardRequired) {
-    guard = await requireGuardToken(request, {
-      action: normalizeText(guardAction),
-      target_type: normalizeText(guardTargetType),
-      target_id: normalizeText(guardTargetId)
-    });
-    if (!guard.ok) return { ok: false, response: guard.response };
-  }
-
-  return {
-    ok: true,
-    auth,
-    payload,
-    reason,
-    guard
-  };
-}
-
 function uniqueStrings(values) {
   return [...new Set((values || []).map((value) => normalizeText(value)).filter(Boolean))];
 }
@@ -838,13 +450,17 @@ async function inspectDynamoDbTables() {
     }
   }));
   const healthyCount = tables.filter((table) => table.healthy).length;
+  const totalItems = tables.reduce((sum, table) => sum + Number(table.item_count || 0), 0);
+  const totalSizeBytes = tables.reduce((sum, table) => sum + Number(table.size_bytes || 0), 0);
   return {
     service: 'dynamodb',
     status: healthyCount === tables.length ? 'healthy' : (healthyCount ? 'degraded' : 'unavailable'),
     summary: {
       total_tables: tables.length,
       healthy_tables: healthyCount,
-      unhealthy_tables: tables.length - healthyCount
+      unhealthy_tables: tables.length - healthyCount,
+      total_items: totalItems,
+      total_size_bytes: totalSizeBytes
     },
     tables
   };
@@ -893,19 +509,23 @@ async function inspectS3Buckets() {
     }
   }));
   const healthyCount = items.filter((bucket) => bucket.healthy).length;
+  const totalSampledObjects = items.reduce((sum, bucket) => sum + Number(bucket.sampled_object_count || 0), 0);
+  const totalSampledSizeBytes = items.reduce((sum, bucket) => sum + Number(bucket.sampled_size_bytes || 0), 0);
   return {
     service: 's3',
     status: healthyCount === items.length ? 'healthy' : (healthyCount ? 'degraded' : 'unavailable'),
     summary: {
       total_buckets: items.length,
       healthy_buckets: healthyCount,
-      unhealthy_buckets: items.length - healthyCount
+      unhealthy_buckets: items.length - healthyCount,
+      total_sampled_objects: totalSampledObjects,
+      total_sampled_size_bytes: totalSampledSizeBytes
     },
     buckets: items
   };
 }
 
-async function inspectLambdaService(metricWindow = parseAwsWindow('24h')) {
+async function inspectLambdaService() {
   const functionName = normalizeText(config.aws.functionName);
   if (!functionName) {
     return {
@@ -916,8 +536,7 @@ async function inspectLambdaService(metricWindow = parseAwsWindow('24h')) {
   }
   try {
     const now = new Date();
-    const windowSpec = metricWindow || parseAwsWindow('24h');
-    const startTime = windowSpec.startTime || new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const [result, invocations, errors, throttles, duration] = await Promise.all([
       lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: functionName })),
       fetchMetricStatistics(cloudWatchClient, {
@@ -925,7 +544,7 @@ async function inspectLambdaService(metricWindow = parseAwsWindow('24h')) {
         metricName: 'Invocations',
         dimensions: [{ Name: 'FunctionName', Value: functionName }],
         stat: 'Sum',
-        period: windowSpec.period || 300,
+        period: 300,
         startTime,
         endTime: now
       }),
@@ -934,7 +553,7 @@ async function inspectLambdaService(metricWindow = parseAwsWindow('24h')) {
         metricName: 'Errors',
         dimensions: [{ Name: 'FunctionName', Value: functionName }],
         stat: 'Sum',
-        period: windowSpec.period || 300,
+        period: 300,
         startTime,
         endTime: now
       }),
@@ -943,7 +562,7 @@ async function inspectLambdaService(metricWindow = parseAwsWindow('24h')) {
         metricName: 'Throttles',
         dimensions: [{ Name: 'FunctionName', Value: functionName }],
         stat: 'Sum',
-        period: windowSpec.period || 300,
+        period: 300,
         startTime,
         endTime: now
       }),
@@ -952,7 +571,7 @@ async function inspectLambdaService(metricWindow = parseAwsWindow('24h')) {
         metricName: 'Duration',
         dimensions: [{ Name: 'FunctionName', Value: functionName }],
         stat: 'Average',
-        period: windowSpec.period || 300,
+        period: 300,
         startTime,
         endTime: now
       })
@@ -984,16 +603,6 @@ async function inspectLambdaService(metricWindow = parseAwsWindow('24h')) {
       last_update_status: lastUpdateStatus,
       last_modified: normalizeText(result?.LastModified),
       version: normalizeText(result?.Version),
-      metric_window: {
-        window: windowSpec.window || '24h',
-        window_start: startTime.toISOString(),
-        window_end: now.toISOString(),
-        invocations: invocationTotal,
-        errors: errorTotal,
-        throttles: throttleTotal,
-        error_rate_percent: Number(errorRate.toFixed(4)),
-        avg_duration_ms: Number(durationAvgMs.toFixed(2))
-      },
       metrics_24h: {
         window_start: startTime.toISOString(),
         window_end: now.toISOString(),
@@ -1015,18 +624,15 @@ async function inspectLambdaService(metricWindow = parseAwsWindow('24h')) {
   }
 }
 
-async function inspectCloudFrontService(requestHeaders = {}, metricWindow = parseAwsWindow('24h')) {
+async function inspectCloudFrontService(requestHeaders = {}) {
   const configuredDistributionId = normalizeText(config.aws.cloudFrontDistributionId);
   const configuredDomain = normalizeHost(config.aws.cloudFrontDomainName || config.baseUrl);
   const runtimeHost = normalizeHost(requestHeaders?.host || requestHeaders?.Host || '');
   const forwardedHost = normalizeHost(requestHeaders?.['x-forwarded-host'] || requestHeaders?.['X-Forwarded-Host'] || '');
   const hostCandidates = uniqueStrings([configuredDomain, forwardedHost, runtimeHost]);
-  const mapped = resolveMappedDistributionIdByHost(...hostCandidates);
 
-  let distributionId = configuredDistributionId || normalizeText(mapped?.distributionId);
-  let lookupMethod = configuredDistributionId
-    ? 'config.distribution_id'
-    : (mapped?.distributionId ? 'host_map' : '');
+  let distributionId = configuredDistributionId;
+  let lookupMethod = configuredDistributionId ? 'config.distribution_id' : '';
   let lookupError = '';
   let listedDistribution = null;
   if (!distributionId) {
@@ -1073,7 +679,6 @@ async function inspectCloudFrontService(requestHeaders = {}, metricWindow = pars
       lookup: {
         method: lookupMethod || 'not_resolved',
         configured_domain: configuredDomain,
-        host_map_match: normalizeText(mapped?.host || ''),
         runtime_host: runtimeHost,
         forwarded_host: forwardedHost
       },
@@ -1084,8 +689,7 @@ async function inspectCloudFrontService(requestHeaders = {}, metricWindow = pars
 
   try {
     const now = new Date();
-    const windowSpec = metricWindow || parseAwsWindow('24h');
-    const startTime = windowSpec.startTime || new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const [result, requests, bytesDownloaded, err4xx, err5xx] = await Promise.all([
       cloudFrontClient.send(new GetDistributionCommand({ Id: distributionId })),
       fetchMetricStatistics(cloudWatchGlobalClient, {
@@ -1093,7 +697,7 @@ async function inspectCloudFrontService(requestHeaders = {}, metricWindow = pars
         metricName: 'Requests',
         dimensions: [{ Name: 'DistributionId', Value: distributionId }, { Name: 'Region', Value: 'Global' }],
         stat: 'Sum',
-        period: windowSpec.period || 300,
+        period: 300,
         startTime,
         endTime: now
       }),
@@ -1102,7 +706,7 @@ async function inspectCloudFrontService(requestHeaders = {}, metricWindow = pars
         metricName: 'BytesDownloaded',
         dimensions: [{ Name: 'DistributionId', Value: distributionId }, { Name: 'Region', Value: 'Global' }],
         stat: 'Sum',
-        period: windowSpec.period || 300,
+        period: 300,
         startTime,
         endTime: now
       }),
@@ -1111,7 +715,7 @@ async function inspectCloudFrontService(requestHeaders = {}, metricWindow = pars
         metricName: '4xxErrorRate',
         dimensions: [{ Name: 'DistributionId', Value: distributionId }, { Name: 'Region', Value: 'Global' }],
         stat: 'Average',
-        period: windowSpec.period || 300,
+        period: 300,
         startTime,
         endTime: now
       }),
@@ -1120,7 +724,7 @@ async function inspectCloudFrontService(requestHeaders = {}, metricWindow = pars
         metricName: '5xxErrorRate',
         dimensions: [{ Name: 'DistributionId', Value: distributionId }, { Name: 'Region', Value: 'Global' }],
         stat: 'Average',
-        period: windowSpec.period || 300,
+        period: 300,
         startTime,
         endTime: now
       })
@@ -1132,10 +736,9 @@ async function inspectCloudFrontService(requestHeaders = {}, metricWindow = pars
     const metricErrors = [requests, bytesDownloaded, err4xx, err5xx]
       .filter((metric) => !metric.ok && metric.error)
       .map((metric) => metric.error);
-    const statusHealthy = deployed && enabled && (configuredDistributionId ? true : healthProbe.ok);
     return {
       service: 'cloudfront',
-      status: statusHealthy ? 'healthy' : 'degraded',
+      status: deployed && enabled && healthProbe.ok ? 'healthy' : 'degraded',
       distribution_id: distributionId,
       domain_name: normalizeText(distribution.DomainName || probeHost),
       aliases: configData?.Aliases?.Items || [],
@@ -1152,15 +755,8 @@ async function inspectCloudFrontService(requestHeaders = {}, metricWindow = pars
       lookup: {
         method: lookupMethod || 'distribution_id',
         configured_domain: configuredDomain,
-        host_map_match: normalizeText(mapped?.host || ''),
         runtime_host: runtimeHost,
         forwarded_host: forwardedHost
-      },
-      metric_window: {
-        window: windowSpec.window || '24h',
-        window_start: startTime.toISOString(),
-        window_end: now.toISOString(),
-        period_seconds: windowSpec.period || 300
       },
       metrics_24h: {
         window_start: startTime.toISOString(),
@@ -1182,7 +778,6 @@ async function inspectCloudFrontService(requestHeaders = {}, metricWindow = pars
       lookup: {
         method: lookupMethod || 'distribution_id',
         configured_domain: configuredDomain,
-        host_map_match: normalizeText(mapped?.host || ''),
         runtime_host: runtimeHost,
         forwarded_host: forwardedHost
       },
@@ -1201,14 +796,13 @@ async function inspectCloudWatchService() {
       : functionName.replace(/-api$/i, '-')
   );
 
-  const [logGroupsResult, alarmsResult, configResult] = await Promise.allSettled([
+  const [logGroupsResult, alarmsResult] = await Promise.allSettled([
     logGroupName
       ? cloudWatchLogsClient.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: logGroupName, limit: 20 }))
       : Promise.resolve({ logGroups: [] }),
     alarmPrefix
       ? cloudWatchClient.send(new DescribeAlarmsCommand({ AlarmNamePrefix: alarmPrefix, MaxRecords: 50 }))
-      : Promise.resolve({ MetricAlarms: [] }),
-    appConfigRepo.list()
+      : Promise.resolve({ MetricAlarms: [] })
   ]);
 
   let logGroup = null;
@@ -1222,27 +816,10 @@ async function inspectCloudWatchService() {
   let alarms = [];
   let alarmsError = '';
   if (alarmsResult.status === 'fulfilled') {
-    const snoozeMap = new Map();
-    if (configResult.status === 'fulfilled') {
-      for (const item of configResult.value || []) {
-        const key = normalizeText(item?.key || '');
-        if (!key.startsWith('admin_aws_alarm_snooze:')) continue;
-        const alarmName = key.slice('admin_aws_alarm_snooze:'.length);
-        try {
-          const parsed = typeof item.value === 'string' ? JSON.parse(item.value) : item.value;
-          if (parsed?.expires_at && Number(parsed.expires_at) <= Date.now()) continue;
-          snoozeMap.set(alarmName, parsed);
-        } catch {
-          continue;
-        }
-      }
-    }
     alarms = (alarmsResult.value?.MetricAlarms || []).map((alarm) => ({
       name: normalizeText(alarm.AlarmName),
       state: normalizeText(alarm.StateValue || 'UNKNOWN'),
-      reason: normalizeText(alarm.StateReason || ''),
-      actions_enabled: Array.isArray(alarm.AlarmActions) ? alarm.AlarmActions.length > 0 : true,
-      snooze: snoozeMap.get(normalizeText(alarm.AlarmName)) || null
+      reason: normalizeText(alarm.StateReason || '')
     }));
   } else {
     alarmsError = formatAwsError(alarmsResult.reason);
@@ -1406,16 +983,15 @@ export async function getAdminOverview(request) {
 }
 
 export async function getAdminAwsServices(request) {
-  const rateLimit = await enforceAwsRateLimit(request, 'admin-aws:services', 'read');
-  if (!rateLimit.ok) return rateLimit.response;
+  const auth = await requireAdmin(request);
+  if (!auth.ok) return auth.response;
   const requestHeaders = request?.headers || {};
-  const windowSpec = parseAwsWindow(request?.query?.window);
 
   const [lambda, dynamodb, s3Status, cloudfront, cloudwatch] = await Promise.all([
-    inspectLambdaService(windowSpec),
+    inspectLambdaService(),
     inspectDynamoDbTables(),
     inspectS3Buckets(),
-    inspectCloudFrontService(requestHeaders, windowSpec),
+    inspectCloudFrontService(requestHeaders),
     inspectCloudWatchService()
   ]);
 
@@ -1427,12 +1003,6 @@ export async function getAdminAwsServices(request) {
     aws: {
       checked_at: nowIso(),
       region: normalizeText(config.aws.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1'),
-      metric_window: {
-        window: windowSpec.window,
-        window_start: windowSpec.startTime.toISOString(),
-        window_end: new Date().toISOString(),
-        period_seconds: windowSpec.period
-      },
       metadata: {
         project_name: normalizeText(config.aws.projectName),
         stage: normalizeText(config.aws.stage),
@@ -1451,800 +1021,6 @@ export async function getAdminAwsServices(request) {
       }
     }
   });
-}
-
-export async function listAdminAwsCloudFrontInvalidations(request) {
-  const rateLimit = await enforceAwsRateLimit(request, 'admin-aws:cloudfront:invalidations', 'read');
-  if (!rateLimit.ok) return rateLimit.response;
-  const query = request.query || {};
-  const ctx = await resolveCloudFrontDistributionContext(request, query.distribution_id);
-  if (!ctx.distributionId) {
-    return jsonResponse(404, { success: false, error: 'CloudFront distribution not resolved' });
-  }
-
-  const limit = Math.max(1, Math.min(Number(query.limit || 20), 100));
-  try {
-    const result = await cloudFrontClient.send(new ListInvalidationsCommand({
-      DistributionId: ctx.distributionId,
-      MaxItems: String(limit)
-    }));
-    const invalidations = (result?.InvalidationList?.Items || []).map((item) => buildCloudFrontInvalidationSummary(item));
-    return jsonResponse(200, {
-      success: true,
-      distribution_id: ctx.distributionId,
-      source: ctx.source,
-      invalidations,
-      total: Number(result?.InvalidationList?.Quantity || invalidations.length)
-    });
-  } catch (error) {
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function createAdminAwsCloudFrontInvalidation(request) {
-  const body = await extractRequestBody(request);
-  const paths = normalizeAwsPaths(body.paths || body.path || ['/*']);
-  const ctx = await resolveCloudFrontDistributionContext(request, body.distribution_id || body.distributionId);
-  if (!ctx.distributionId) {
-    return jsonResponse(404, { success: false, error: 'CloudFront distribution not resolved' });
-  }
-
-  const prep = await requireAwsMutation(request, {
-    rateScope: 'admin-aws:cloudfront:invalidation',
-    rateBucket: 'highImpact',
-    action: 'aws_cloudfront_create_invalidation',
-    targetType: 'aws_cloudfront_distribution',
-    targetId: ctx.distributionId,
-    guardRequired: true
-  });
-  if (!prep.ok) return prep.response;
-
-  let before = null;
-  try {
-    const current = await cloudFrontClient.send(new GetDistributionCommand({ Id: ctx.distributionId }));
-    before = {
-      distribution_id: ctx.distributionId,
-      status: normalizeText(current?.Distribution?.Status),
-      in_progress_invalidations: Number(current?.Distribution?.InProgressInvalidationBatches || 0)
-    };
-
-    const callerReference = `admin-${Date.now()}-${randomId()}`;
-    const result = await cloudFrontClient.send(new CreateInvalidationCommand({
-      DistributionId: ctx.distributionId,
-      InvalidationBatch: {
-        CallerReference: callerReference,
-        Paths: {
-          Quantity: paths.length,
-          Items: paths
-        }
-      }
-    }));
-    const invalidation = buildCloudFrontInvalidationSummary(result?.Invalidation || {});
-    const after = await cloudFrontClient.send(new GetDistributionCommand({ Id: ctx.distributionId }));
-    const afterSummary = {
-      distribution_id: ctx.distributionId,
-      status: normalizeText(after?.Distribution?.Status),
-      in_progress_invalidations: Number(after?.Distribution?.InProgressInvalidationBatches || 0)
-    };
-
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_CF_CREATE_INVALIDATION',
-      'aws_cloudfront_distribution',
-      ctx.distributionId,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        after: afterSummary,
-        paths,
-        caller_reference: callerReference,
-        invalidation,
-        guard_token: prep.guard?.token || null
-      }
-    );
-    await broadcastAdminEvent('AWS_CF_INVALIDATION_CREATED', {
-      distribution_id: ctx.distributionId,
-      invalidation
-    });
-    return jsonResponse(200, {
-      success: true,
-      distribution_id: ctx.distributionId,
-      invalidation
-    });
-  } catch (error) {
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_CF_CREATE_INVALIDATION_FAILED',
-      'aws_cloudfront_distribution',
-      ctx.distributionId,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        error: formatAwsError(error),
-        paths,
-        guard_token: prep.guard?.token || null
-      }
-    );
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function getAdminAwsCloudFrontInvalidation(request, invalidationId) {
-  const rateLimit = await enforceAwsRateLimit(request, 'admin-aws:cloudfront:invalidations', 'read');
-  if (!rateLimit.ok) return rateLimit.response;
-  const normalizedInvalidationId = normalizeText(invalidationId);
-  if (!normalizedInvalidationId) {
-    return jsonResponse(400, { success: false, error: 'Invalidation id required' });
-  }
-  const ctx = await resolveCloudFrontDistributionContext(request, request.query?.distribution_id);
-  if (!ctx.distributionId) {
-    return jsonResponse(404, { success: false, error: 'CloudFront distribution not resolved' });
-  }
-
-  try {
-    const result = await cloudFrontClient.send(new GetInvalidationCommand({
-      DistributionId: ctx.distributionId,
-      Id: normalizedInvalidationId
-    }));
-    const invalidation = buildCloudFrontInvalidationSummary(result?.Invalidation || {});
-    return jsonResponse(200, {
-      success: true,
-      distribution_id: ctx.distributionId,
-      source: ctx.source,
-      invalidation
-    });
-  } catch (error) {
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function getAdminAwsLambdaConfig(request) {
-  const rateLimit = await enforceAwsRateLimit(request, 'admin-aws:lambda:config', 'read');
-  if (!rateLimit.ok) return rateLimit.response;
-  const functionName = normalizeText(request?.query?.function_name || request?.query?.functionName || config.aws.functionName);
-  try {
-    const lambda = await getAwsLambdaConfig(functionName);
-    return jsonResponse(200, { success: true, lambda });
-  } catch (error) {
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function patchAdminAwsLambdaConcurrency(request) {
-  const functionName = normalizeText((await extractRequestBody(request))?.function_name || config.aws.functionName);
-  if (!functionName) {
-    return jsonResponse(400, { success: false, error: 'Function name required' });
-  }
-  const prep = await requireAwsMutation(request, {
-    rateScope: 'admin-aws:lambda:concurrency',
-    rateBucket: 'highImpact',
-    action: 'aws_lambda_set_concurrency',
-    targetType: 'aws_lambda_function',
-    targetId: functionName,
-    guardRequired: true
-  });
-  if (!prep.ok) return prep.response;
-
-  const requestedConcurrency = normalizeConcurrencyValue(prep.payload.reserved_concurrency ?? prep.payload.reservedConcurrency);
-  if (requestedConcurrency === undefined) {
-    return jsonResponse(400, { success: false, error: 'Reserved concurrency must be a number or null' });
-  }
-
-  const before = await getAwsLambdaConfig(functionName);
-  try {
-    if (requestedConcurrency === null) {
-      await lambdaClient.send(new DeleteFunctionConcurrencyCommand({ FunctionName: functionName }));
-    } else {
-      await lambdaClient.send(new PutFunctionConcurrencyCommand({
-        FunctionName: functionName,
-        ReservedConcurrentExecutions: requestedConcurrency
-      }));
-    }
-
-    const after = await getAwsLambdaConfig(functionName);
-    await logAdminAction(
-      prep.auth.user.id,
-      requestedConcurrency === null ? 'AWS_LAMBDA_CLEAR_CONCURRENCY' : 'AWS_LAMBDA_SET_CONCURRENCY',
-      'aws_lambda_function',
-      functionName,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        after,
-        requested_reserved_concurrency: requestedConcurrency,
-        guard_token: prep.guard?.token || null
-      }
-    );
-    await broadcastAdminEvent('AWS_LAMBDA_CONCURRENCY_UPDATED', {
-      function_name: functionName,
-      reserved_concurrency: requestedConcurrency
-    });
-    return jsonResponse(200, {
-      success: true,
-      lambda: after
-    });
-  } catch (error) {
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_LAMBDA_SET_CONCURRENCY_FAILED',
-      'aws_lambda_function',
-      functionName,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        requested_reserved_concurrency: requestedConcurrency,
-        error: formatAwsError(error),
-        guard_token: prep.guard?.token || null
-      }
-    );
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function patchAdminAwsLogsRetention(request) {
-  const body = await extractRequestBody(request);
-  const logGroupName = normalizeText(body.log_group_name || body.logGroupName || (config.aws.functionName ? `/aws/lambda/${config.aws.functionName}` : ''));
-  const retentionDays = normalizeRetentionDays(body.retention_days ?? body.retentionDays);
-  if (!logGroupName) {
-    return jsonResponse(400, { success: false, error: 'Log group name required' });
-  }
-  if (!retentionDays) {
-    return jsonResponse(400, { success: false, error: 'Retention days must be between 1 and 3653' });
-  }
-
-  const prep = await requireAwsMutation(request, {
-    rateScope: 'admin-aws:logs:retention',
-    rateBucket: 'mutate',
-    action: 'logs_set_retention',
-    targetType: 'aws_log_group',
-    targetId: logGroupName,
-    guardRequired: false
-  });
-  if (!prep.ok) return prep.response;
-
-  let before = null;
-  try {
-    const describe = await cloudWatchLogsClient.send(new DescribeLogGroupsCommand({
-      logGroupNamePrefix: logGroupName,
-      limit: 20
-    }));
-    before = (describe?.logGroups || []).find((group) => normalizeText(group.logGroupName) === logGroupName) || null;
-    await cloudWatchLogsClient.send(new PutRetentionPolicyCommand({
-      logGroupName: logGroupName,
-      retentionInDays: retentionDays
-    }));
-    const after = {
-      name: logGroupName,
-      retention_days: retentionDays
-    };
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_LOGS_SET_RETENTION',
-      'aws_log_group',
-      logGroupName,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        after,
-        guard_token: prep.guard?.token || null
-      }
-    );
-    await broadcastAdminEvent('AWS_LOGS_RETENTION_UPDATED', {
-      log_group_name: logGroupName,
-      retention_days: retentionDays
-    });
-    return jsonResponse(200, {
-      success: true,
-      log_group: after
-    });
-  } catch (error) {
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_LOGS_SET_RETENTION_FAILED',
-      'aws_log_group',
-      logGroupName,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        retention_days: retentionDays,
-        error: formatAwsError(error),
-        guard_token: prep.guard?.token || null
-      }
-    );
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function postAdminAwsCloudWatchAlarmActions(request, alarmName) {
-  const body = await extractRequestBody(request);
-  const enabledRaw = body.enabled;
-  const enabled = typeof enabledRaw === 'boolean'
-    ? enabledRaw
-    : (normalizeLower(enabledRaw) === 'true' ? true : (normalizeLower(enabledRaw) === 'false' ? false : null));
-  if (enabled === null) {
-    return jsonResponse(400, { success: false, error: 'enabled must be true or false' });
-  }
-
-  const normalizedAlarmName = decodePathParam(alarmName);
-  if (!normalizedAlarmName) {
-    return jsonResponse(400, { success: false, error: 'Alarm name required' });
-  }
-  const prep = await requireAwsMutation(request, {
-    rateScope: 'admin-aws:cloudwatch:alarm',
-    rateBucket: enabled ? 'mutate' : 'highImpact',
-    action: 'aws_cloudwatch_toggle_alarm_actions',
-    targetType: 'aws_alarm',
-    targetId: normalizedAlarmName,
-    guardRequired: !enabled
-  });
-  if (!prep.ok) return prep.response;
-
-  let before = null;
-  try {
-    const describeBefore = await cloudWatchClient.send(new DescribeAlarmsCommand({ AlarmNames: [normalizedAlarmName], MaxRecords: 1 }));
-    before = (describeBefore?.MetricAlarms || [])[0] || null;
-    if (enabled) {
-      await cloudWatchClient.send(new EnableAlarmActionsCommand({ AlarmNames: [normalizedAlarmName] }));
-      await appConfigRepo.delete(buildAlarmSnoozeKey(normalizedAlarmName));
-    } else {
-      await cloudWatchClient.send(new DisableAlarmActionsCommand({ AlarmNames: [normalizedAlarmName] }));
-    }
-    const describeAfter = await cloudWatchClient.send(new DescribeAlarmsCommand({ AlarmNames: [normalizedAlarmName], MaxRecords: 1 }));
-    const after = (describeAfter?.MetricAlarms || [])[0] || null;
-    if (!after) {
-      return jsonResponse(404, { success: false, error: 'Alarm not found' });
-    }
-    await logAdminAction(
-      prep.auth.user.id,
-      enabled ? 'AWS_ALARM_ENABLE_ACTIONS' : 'AWS_ALARM_DISABLE_ACTIONS',
-      'aws_alarm',
-      normalizedAlarmName,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        after,
-        enabled,
-        guard_token: prep.guard?.token || null
-      }
-    );
-    await broadcastAdminEvent('AWS_ALARM_ACTIONS_UPDATED', {
-      alarm_name: normalizedAlarmName,
-      actions_enabled: enabled
-    });
-    return jsonResponse(200, {
-      success: true,
-      alarm: {
-        name: normalizedAlarmName,
-        actions_enabled: enabled,
-        state: normalizeText(after?.StateValue || '')
-      }
-    });
-  } catch (error) {
-    await logAdminAction(
-      prep.auth.user.id,
-      enabled ? 'AWS_ALARM_ENABLE_ACTIONS_FAILED' : 'AWS_ALARM_DISABLE_ACTIONS_FAILED',
-      'aws_alarm',
-      normalizedAlarmName,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        enabled,
-        error: formatAwsError(error),
-        guard_token: prep.guard?.token || null
-      }
-    );
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function postAdminAwsCloudWatchAlarmSnooze(request, alarmName) {
-  const body = await extractRequestBody(request);
-  const rawMinutes = body.minutes ?? body.duration_minutes ?? 60;
-  const minutesParsed = Number(rawMinutes);
-  const minutes = Math.max(1, Math.min(1440, Number.isFinite(minutesParsed) ? minutesParsed : 60));
-  const normalizedAlarmName = decodePathParam(alarmName);
-  if (!normalizedAlarmName) {
-    return jsonResponse(400, { success: false, error: 'Alarm name required' });
-  }
-  const prep = await requireAwsMutation(request, {
-    rateScope: 'admin-aws:cloudwatch:snooze',
-    rateBucket: 'highImpact',
-    action: 'aws_cloudwatch_snooze',
-    targetType: 'aws_alarm',
-    targetId: normalizedAlarmName,
-    guardRequired: true
-  });
-  if (!prep.ok) return prep.response;
-
-  let before = null;
-  try {
-    const describeBefore = await cloudWatchClient.send(new DescribeAlarmsCommand({ AlarmNames: [normalizedAlarmName], MaxRecords: 1 }));
-    before = (describeBefore?.MetricAlarms || [])[0] || null;
-    await cloudWatchClient.send(new DisableAlarmActionsCommand({ AlarmNames: [normalizedAlarmName] }));
-    const snooze = {
-      alarm_name: normalizedAlarmName,
-      minutes,
-      reason: prep.reason,
-      created_at: nowIso(),
-      until: new Date(Date.now() + (minutes * 60 * 1000)).toISOString(),
-      expires_at: Date.now() + (minutes * 60 * 1000)
-    };
-    await appConfigRepo.set(buildAlarmSnoozeKey(normalizedAlarmName), JSON.stringify(snooze));
-    const describeAfter = await cloudWatchClient.send(new DescribeAlarmsCommand({ AlarmNames: [normalizedAlarmName], MaxRecords: 1 }));
-    const after = (describeAfter?.MetricAlarms || [])[0] || null;
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_ALARM_SNOOZE',
-      'aws_alarm',
-      normalizedAlarmName,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        after,
-        snooze,
-        guard_token: prep.guard?.token || null
-      }
-    );
-    await broadcastAdminEvent('AWS_ALARM_SNOOZED', {
-      alarm_name: normalizedAlarmName,
-      until: snooze.until
-    });
-    return jsonResponse(200, {
-      success: true,
-      snooze
-    });
-  } catch (error) {
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_ALARM_SNOOZE_FAILED',
-      'aws_alarm',
-      normalizedAlarmName,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        minutes,
-        error: formatAwsError(error),
-        guard_token: prep.guard?.token || null
-      }
-    );
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function deleteAdminAwsCloudWatchAlarmSnooze(request, alarmName) {
-  const normalizedAlarmName = decodePathParam(alarmName);
-  if (!normalizedAlarmName) {
-    return jsonResponse(400, { success: false, error: 'Alarm name required' });
-  }
-  const prep = await requireAwsMutation(request, {
-    rateScope: 'admin-aws:cloudwatch:snooze',
-    rateBucket: 'highImpact',
-    action: 'aws_cloudwatch_unsnooze',
-    targetType: 'aws_alarm',
-    targetId: normalizedAlarmName,
-    guardRequired: true
-  });
-  if (!prep.ok) return prep.response;
-
-  let before = null;
-  try {
-    before = await readAlarmSnooze(normalizedAlarmName);
-    await cloudWatchClient.send(new EnableAlarmActionsCommand({ AlarmNames: [normalizedAlarmName] }));
-    await appConfigRepo.delete(buildAlarmSnoozeKey(normalizedAlarmName));
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_ALARM_UNSNOOZE',
-      'aws_alarm',
-      normalizedAlarmName,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        after: null,
-        guard_token: prep.guard?.token || null
-      }
-    );
-    await broadcastAdminEvent('AWS_ALARM_UNSNOOZED', {
-      alarm_name: normalizedAlarmName
-    });
-    return jsonResponse(200, {
-      success: true,
-      alarm: {
-        name: normalizedAlarmName,
-        actions_enabled: true
-      }
-    });
-  } catch (error) {
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_ALARM_UNSNOOZE_FAILED',
-      'aws_alarm',
-      normalizedAlarmName,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        error: formatAwsError(error),
-        guard_token: prep.guard?.token || null
-      }
-    );
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function postAdminAwsS3Rescan(request, bucketName) {
-  const rateLimit = await enforceAwsRateLimit(request, 'admin-aws:s3:rescan', 'read', normalizeText(bucketName));
-  if (!rateLimit.ok) return rateLimit.response;
-  const normalizedBucket = decodePathParam(bucketName);
-  if (!normalizedBucket) {
-    return jsonResponse(400, { success: false, error: 'Bucket name required' });
-  }
-  const bucket = await inspectSingleS3Bucket(normalizedBucket);
-  if (bucket.status === 'ERROR') {
-    return jsonResponse(isLikelyNotFoundError(bucket.error) ? 404 : 500, {
-      success: false,
-      error: bucket.error,
-      bucket
-    });
-  }
-  return jsonResponse(200, { success: true, bucket });
-}
-
-export async function enableAdminAwsS3Versioning(request, bucketName) {
-  const normalizedBucket = decodePathParam(bucketName);
-  if (!normalizedBucket) {
-    return jsonResponse(400, { success: false, error: 'Bucket name required' });
-  }
-  const prep = await requireAwsMutation(request, {
-    rateScope: 'admin-aws:s3:versioning',
-    rateBucket: 'mutate',
-    action: 's3_enable_versioning',
-    targetType: 'aws_s3_bucket',
-    targetId: normalizedBucket,
-    guardRequired: false
-  });
-  if (!prep.ok) return prep.response;
-
-  const before = await inspectSingleS3Bucket(normalizedBucket);
-  try {
-    await s3.send(new PutBucketVersioningCommand({
-      Bucket: normalizedBucket,
-      VersioningConfiguration: { Status: 'Enabled' }
-    }));
-    const after = await inspectSingleS3Bucket(normalizedBucket);
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_S3_ENABLE_VERSIONING',
-      'aws_s3_bucket',
-      normalizedBucket,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        after,
-        guard_token: prep.guard?.token || null
-      }
-    );
-    await broadcastAdminEvent('AWS_S3_VERSIONING_UPDATED', {
-      bucket: normalizedBucket,
-      versioning: 'Enabled'
-    });
-    return jsonResponse(200, { success: true, bucket: after });
-  } catch (error) {
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_S3_ENABLE_VERSIONING_FAILED',
-      'aws_s3_bucket',
-      normalizedBucket,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        error: formatAwsError(error),
-        guard_token: prep.guard?.token || null
-      }
-    );
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function enableAdminAwsS3Encryption(request, bucketName) {
-  const normalizedBucket = decodePathParam(bucketName);
-  if (!normalizedBucket) {
-    return jsonResponse(400, { success: false, error: 'Bucket name required' });
-  }
-  const prep = await requireAwsMutation(request, {
-    rateScope: 'admin-aws:s3:encryption',
-    rateBucket: 'mutate',
-    action: 's3_enable_encryption',
-    targetType: 'aws_s3_bucket',
-    targetId: normalizedBucket,
-    guardRequired: false
-  });
-  if (!prep.ok) return prep.response;
-
-  const before = await inspectSingleS3Bucket(normalizedBucket);
-  try {
-    await s3.send(new PutBucketEncryptionCommand({
-      Bucket: normalizedBucket,
-      ServerSideEncryptionConfiguration: {
-        Rules: [
-          {
-            ApplyServerSideEncryptionByDefault: {
-              SSEAlgorithm: 'AES256'
-            }
-          }
-        ]
-      }
-    }));
-    const after = await inspectSingleS3Bucket(normalizedBucket);
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_S3_ENABLE_ENCRYPTION',
-      'aws_s3_bucket',
-      normalizedBucket,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        after,
-        guard_token: prep.guard?.token || null
-      }
-    );
-    await broadcastAdminEvent('AWS_S3_ENCRYPTION_UPDATED', {
-      bucket: normalizedBucket,
-      encryption: 'Enabled'
-    });
-    return jsonResponse(200, { success: true, bucket: after });
-  } catch (error) {
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_S3_ENABLE_ENCRYPTION_FAILED',
-      'aws_s3_bucket',
-      normalizedBucket,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        error: formatAwsError(error),
-        guard_token: prep.guard?.token || null
-      }
-    );
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
-}
-
-export async function refreshAdminAwsDynamoTable(request, tableName) {
-  const rateLimit = await enforceAwsRateLimit(request, 'admin-aws:dynamodb:refresh', 'read', normalizeText(tableName));
-  if (!rateLimit.ok) return rateLimit.response;
-  const normalizedTable = decodePathParam(tableName);
-  if (!normalizedTable) {
-    return jsonResponse(400, { success: false, error: 'Table name required' });
-  }
-  const table = await inspectSingleDynamoTable(normalizedTable);
-  if (table.status === 'ERROR') {
-    return jsonResponse(isLikelyNotFoundError(table.error) ? 404 : 500, {
-      success: false,
-      error: table.error,
-      table
-    });
-  }
-  return jsonResponse(200, { success: true, table });
-}
-
-export async function patchAdminAwsDynamoTableDeletionProtection(request, tableName) {
-  const body = await extractRequestBody(request);
-  const enabledRaw = body.enabled ?? body.deletion_protection_enabled ?? body.deletionProtectionEnabled;
-  const enabled = typeof enabledRaw === 'boolean'
-    ? enabledRaw
-    : (normalizeLower(enabledRaw) === 'true' ? true : (normalizeLower(enabledRaw) === 'false' ? false : null));
-  if (enabled === null) {
-    return jsonResponse(400, { success: false, error: 'enabled must be true or false' });
-  }
-
-  const normalizedTable = decodePathParam(tableName);
-  if (!normalizedTable) {
-    return jsonResponse(400, { success: false, error: 'Table name required' });
-  }
-  const prep = await requireAwsMutation(request, {
-    rateScope: 'admin-aws:dynamodb:deletion-protection',
-    rateBucket: 'highImpact',
-    action: 'aws_dynamodb_toggle_deletion_protection',
-    targetType: 'aws_dynamodb_table',
-    targetId: normalizedTable,
-    guardRequired: true
-  });
-  if (!prep.ok) return prep.response;
-
-  const before = await inspectSingleDynamoTable(normalizedTable);
-  try {
-    await ddbClient.send(new UpdateTableCommand({
-      TableName: normalizedTable,
-      DeletionProtectionEnabled: enabled
-    }));
-    const after = await inspectSingleDynamoTable(normalizedTable);
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_DYNAMODB_TOGGLE_DELETION_PROTECTION',
-      'aws_dynamodb_table',
-      normalizedTable,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        after,
-        enabled,
-        guard_token: prep.guard?.token || null
-      }
-    );
-    await broadcastAdminEvent('AWS_DYNAMODB_DELETION_PROTECTION_UPDATED', {
-      table_name: normalizedTable,
-      enabled
-    });
-    return jsonResponse(200, { success: true, table: after });
-  } catch (error) {
-    await logAdminAction(
-      prep.auth.user.id,
-      'AWS_DYNAMODB_TOGGLE_DELETION_PROTECTION_FAILED',
-      'aws_dynamodb_table',
-      normalizedTable,
-      prep.reason,
-      {
-        aws_request_id: getAwsRequestId(request),
-        before,
-        enabled,
-        error: formatAwsError(error),
-        guard_token: prep.guard?.token || null
-      }
-    );
-    return jsonResponse(getAwsErrorStatusCode(error), {
-      success: false,
-      error: formatAwsError(error)
-    });
-  }
 }
 
 export async function listAdminUsers(request) {

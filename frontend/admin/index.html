@@ -292,40 +292,14 @@
             </div>
         </section>
 
-        <section id="awsPanel" class="view-panel admin-panel px-4 md:px-8 pb-8" aria-busy="false">
-            <div class="admin-section-header aws-topbar">
-                <div class="min-w-0">
+        <section id="awsPanel" class="view-panel admin-panel px-4 md:px-8 pb-8">
+            <div class="admin-section-header">
+                <div>
                     <h2 class="text-2xl font-bold text-white">AWS Services</h2>
-                    <p class="text-sm text-gray-500 max-w-3xl">Control and inspect Lambda, CloudFront, DynamoDB, S3, CloudWatch, and Billing from one dense operator view.</p>
+                    <p class="text-sm text-gray-500">Realtime operator checks for Lambda, CloudFront, DynamoDB, S3, CloudWatch, and Billing.</p>
                 </div>
-                <div class="aws-controls">
-                    <div class="aws-control-row">
-                        <button id="awsRefreshButton" class="aws-control-button primary" type="button">
-                            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
-                            <span>Refresh</span>
-                        </button>
-                        <select id="awsAutoRefreshSelect" class="admin-input aws-control-select" aria-label="Auto refresh">
-                            <option value="off">Auto-refresh Off</option>
-                            <option value="60s">Auto-refresh 60s</option>
-                            <option value="5m">Auto-refresh 5m</option>
-                        </select>
-                        <select id="awsTimeRangeSelect" class="admin-input aws-control-select" aria-label="Time range">
-                            <option value="1h">1h</option>
-                            <option value="24h">24h</option>
-                            <option value="7d">7d</option>
-                            <option value="30d">30d</option>
-                        </select>
-                        <button id="awsDensityToggle" class="aws-control-button" type="button">Comfortable</button>
-                        <button id="awsExportSnapshotButton" class="aws-control-button" type="button">
-                            <i data-lucide="download" class="w-4 h-4"></i>
-                            <span>Export snapshot</span>
-                        </button>
-                    </div>
-                    <div class="aws-control-meta">
-                        <div id="awsRegion" class="aws-control-meta-line">Region: -</div>
-                        <div id="awsCheckedAt" class="aws-control-meta-line">Checked: -</div>
-                        <div id="awsStatusLiveRegion" class="sr-only" aria-live="polite"></div>
-                    </div>
+                <div class="flex flex-wrap gap-2">
+                    <button class="quick-action" data-refresh-panel="aws"><i data-lucide="refresh-cw" class="w-4 h-4 text-cyan-400"></i>Refresh</button>
                 </div>
             </div>
 
@@ -348,102 +322,58 @@
                 </article>
             </div>
 
-            <div class="grid grid-cols-1 xl:grid-cols-[1.25fr_0.95fr] gap-4 mb-6">
-                <article class="admin-card chart-card p-5">
-                    <div class="flex items-center justify-between gap-3 mb-4">
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
+                <article class="admin-card chart-card xl:col-span-2 p-5">
+                    <div class="flex items-center justify-between mb-4">
                         <div>
                             <h3 class="text-lg font-semibold text-white">Service Health Split</h3>
-                            <p class="text-sm text-gray-500">Quick ratio of healthy, degraded, and unavailable services.</p>
+                            <p class="text-sm text-gray-500">Quick ratio of healthy/degraded/unavailable services.</p>
                         </div>
                         <div class="text-right text-xs text-gray-500">
-                            <div id="awsServiceCount">-</div>
+                            <div id="awsRegion">Region: -</div>
+                            <div id="awsCheckedAt">Checked: -</div>
                         </div>
                     </div>
-                    <div class="aws-chart-shell">
+                    <div style="height: 220px; position: relative;">
                         <canvas id="awsServiceChart"></canvas>
                     </div>
-                    <div id="awsMetadataDetails" class="aws-metadata-grid mt-4"></div>
                 </article>
                 <article class="admin-card p-5">
-                    <div class="flex items-center justify-between gap-3 mb-4">
-                        <div>
-                            <h3 class="text-lg font-semibold text-white">Service Cards</h3>
-                            <p class="text-sm text-gray-500">Each card includes freshness, KPI chips, and actions.</p>
-                        </div>
-                        <span class="aws-service-freshness" id="awsSelectedServiceLabel">-</span>
-                    </div>
-                    <div id="awsServiceCards" class="aws-service-grid"></div>
+                    <h3 class="text-lg font-semibold text-white mb-3">Service Cards</h3>
+                    <div id="awsServiceCards" class="space-y-2"></div>
+                    <div id="awsMetadataDetails" class="space-y-1 text-xs text-gray-400 mt-4"></div>
                 </article>
             </div>
 
-            <div class="grid grid-cols-1 xl:grid-cols-[0.95fr_1.05fr] gap-4 mb-6">
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
                 <article class="admin-card p-5">
-                    <div class="flex items-center justify-between gap-3 mb-4">
-                        <div>
-                            <h3 class="text-lg font-semibold text-white">Service Inspector</h3>
-                            <p class="text-sm text-gray-500">Selected service deep dive with controls.</p>
-                        </div>
-                        <span id="awsMetricsFreshness" class="aws-service-freshness">-</span>
-                    </div>
-                    <div id="awsInspectorBody"></div>
+                    <h3 class="text-lg font-semibold text-white mb-3">Lambda + CloudFront</h3>
+                    <div id="awsLambdaDetails" class="space-y-2 text-sm text-gray-300 mb-4"></div>
+                    <div id="awsCloudFrontDetails" class="space-y-2 text-sm text-gray-300"></div>
                 </article>
                 <article class="admin-card p-5">
-                    <div class="flex items-center justify-between gap-3 mb-4">
-                        <div>
-                            <h3 class="text-lg font-semibold text-white">Data Tabs</h3>
-                            <p class="text-sm text-gray-500">Switch between DynamoDB, S3, CloudWatch alarms, and Billing breakdown.</p>
-                        </div>
+                    <h3 class="text-lg font-semibold text-white mb-3">CloudWatch</h3>
+                    <div id="awsCloudWatchDetails" class="space-y-2 text-sm text-gray-300 mb-4"></div>
+                    <div id="awsCloudWatchAlarms" class="space-y-2"></div>
+                </article>
+                <article class="admin-card p-5">
+                    <h3 class="text-lg font-semibold text-white mb-3">Billing</h3>
+                    <div id="awsBillingDetails" class="space-y-2 text-sm text-gray-300 mb-4"></div>
+                    <div style="height: 220px; position: relative;">
+                        <canvas id="awsBillingChart"></canvas>
                     </div>
-                    <div id="awsDataTabs" class="aws-data-tabs" role="tablist" aria-label="AWS data tabs">
-                        <button type="button" class="aws-data-tab active" data-aws-data-view="dynamodb" role="tab" aria-selected="true">DynamoDB</button>
-                        <button type="button" class="aws-data-tab" data-aws-data-view="s3" role="tab" aria-selected="false">S3</button>
-                        <button type="button" class="aws-data-tab" data-aws-data-view="alarms" role="tab" aria-selected="false">Alarms</button>
-                        <button type="button" class="aws-data-tab" data-aws-data-view="billing" role="tab" aria-selected="false">Billing</button>
-                    </div>
-                    <div class="aws-data-panels mt-4">
-                        <div id="awsDataPanel-dynamodb" class="aws-data-panel" role="tabpanel">
-                            <div class="flex items-center justify-between gap-3 mb-3">
-                                <div>
-                                    <h4 class="text-base font-semibold text-white">DynamoDB Tables</h4>
-                                    <p class="text-sm text-gray-500">Table stats, storage, and deletion protection controls.</p>
-                                </div>
-                            </div>
-                            <div id="awsDynamoTableWrap" class="admin-table-wrap"></div>
-                        </div>
-                        <div id="awsDataPanel-s3" class="aws-data-panel hidden" role="tabpanel">
-                            <div class="flex items-center justify-between gap-3 mb-3">
-                                <div>
-                                    <h4 class="text-base font-semibold text-white">S3 Buckets</h4>
-                                    <p class="text-sm text-gray-500">Bucket versioning, encryption, and rescan controls.</p>
-                                </div>
-                            </div>
-                            <div id="awsS3TableWrap" class="admin-table-wrap"></div>
-                        </div>
-                        <div id="awsDataPanel-alarms" class="aws-data-panel hidden" role="tabpanel">
-                            <div class="flex items-center justify-between gap-3 mb-3">
-                                <div>
-                                    <h4 class="text-base font-semibold text-white">CloudWatch</h4>
-                                    <p class="text-sm text-gray-500">Retention, alarm actions, and snooze controls.</p>
-                                </div>
-                            </div>
-                            <div id="awsCloudWatchDetails" class="aws-metadata-grid mb-4"></div>
-                            <div id="awsCloudWatchAlarms" class="space-y-3"></div>
-                        </div>
-                        <div id="awsDataPanel-billing" class="aws-data-panel hidden" role="tabpanel">
-                            <div class="flex items-center justify-between gap-3 mb-3">
-                                <div>
-                                    <h4 class="text-base font-semibold text-white">Billing</h4>
-                                    <p class="text-sm text-gray-500">Cost Explorer trend, top services, and exportable snapshot.</p>
-                                </div>
-                                <button id="awsBillingExportButton" type="button" class="aws-control-button">Export CSV</button>
-                            </div>
-                            <div id="awsBillingDetails" class="aws-metadata-grid mb-4"></div>
-                            <div class="aws-chart-shell compact">
-                                <canvas id="awsBillingChart"></canvas>
-                            </div>
-                            <div id="awsBillingBreakdown" class="space-y-3 mt-4"></div>
-                        </div>
-                    </div>
+                    <div id="awsBillingBreakdown" class="space-y-2 mt-4"></div>
+                </article>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <article class="admin-card p-5">
+                    <h3 class="text-lg font-semibold text-white mb-3">DynamoDB Tables</h3>
+                    <div id="awsDynamoTableWrap" class="admin-table-wrap"></div>
+                </article>
+                <article class="admin-card p-5">
+                    <h3 class="text-lg font-semibold text-white mb-3">S3 Buckets</h3>
+                    <div id="awsS3TableWrap" class="admin-table-wrap"></div>
                 </article>
             </div>
         </section>
@@ -570,10 +500,6 @@
                 <label class="block text-sm text-gray-300 mb-2">Verify Challenge</label>
                 <div class="rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-4 text-sm text-cyan-100" id="adminActionChallenge"></div>
                 <input id="adminActionChallengeInput" class="admin-input mt-3" type="text" placeholder="Type the challenge exactly as shown">
-            </div>
-            <div id="adminActionValueWrap" class="mt-4 hidden">
-                <label class="block text-sm text-gray-300 mb-2" id="adminActionValueLabel">Value</label>
-                <input id="adminActionValue" class="admin-input" type="text" placeholder="">
             </div>
             <div class="flex flex-wrap justify-end gap-2 mt-6">
                 <button class="quick-action" data-close-admin-modal>Cancel</button>
