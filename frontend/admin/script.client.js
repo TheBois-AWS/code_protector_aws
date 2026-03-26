@@ -16,6 +16,10 @@ const adminState = {
   wsReconnectTimer: null,
   wsShouldReconnect: true,
   wsReconnectDelay: 2000,
+  wsConnectedOnce: false,
+  wsRealtimeTimer: null,
+  wsRealtimeInFlight: false,
+  wsRealtimeTargets: new Set(),
   fetchWrapped: false,
   charts: { activity: null, status: null, awsServices: null, awsBilling: null },
   guard: {
@@ -1335,18 +1339,104 @@ async function refreshAll() {
   filterAndRenderEntityTargets();
   showToast('Done', 'Admin data refreshed.', 'success');
 }
+
+const ADMIN_WS_REFRESHABLE_PANELS = new Set(['overview', 'aws', 'users', 'workspaces', 'audit']);
+
+function queueRealtimeRefresh(panels = []) {
+  const list = Array.isArray(panels) ? panels : [panels];
+  for (const panel of list) {
+    const normalized = String(panel || '').toLowerCase();
+    if (ADMIN_WS_REFRESHABLE_PANELS.has(normalized)) {
+      adminState.wsRealtimeTargets.add(normalized);
+    }
+  }
+  if (!adminState.wsRealtimeTargets.size || adminState.wsRealtimeTimer) return;
+  adminState.wsRealtimeTimer = setTimeout(() => {
+    adminState.wsRealtimeTimer = null;
+    flushRealtimeRefreshQueue();
+  }, 300);
+}
+
+async function flushRealtimeRefreshQueue() {
+  if (adminState.wsRealtimeInFlight) return;
+  const pending = [...adminState.wsRealtimeTargets];
+  if (!pending.length) return;
+  adminState.wsRealtimeTargets.clear();
+  adminState.wsRealtimeInFlight = true;
+  try {
+    await Promise.allSettled(pending.map((panel) => loadPanel(panel, { force: true })));
+    if (pending.includes('users') || pending.includes('workspaces') || pending.includes('overview')) {
+      filterAndRenderEntityTargets();
+    }
+  } finally {
+    adminState.wsRealtimeInFlight = false;
+    if (adminState.wsRealtimeTargets.size) queueRealtimeRefresh([]);
+  }
+}
+
+function resolveWsRefreshTargets(normalizedType) {
+  const targets = new Set();
+
+  if (normalizedType.includes('USER') || normalizedType.includes('PROFILE')) {
+    targets.add('users');
+    targets.add('overview');
+  }
+
+  if (normalizedType.includes('WORKSPACE')) {
+    targets.add('workspaces');
+    targets.add('overview');
+  }
+
+  if (
+    normalizedType.includes('PROJECT')
+    || normalizedType.includes('FILE')
+    || normalizedType.includes('LICENSE')
+    || normalizedType.includes('ACCESS')
+    || normalizedType.includes('TEAM')
+    || normalizedType.includes('PIN')
+    || normalizedType.includes('SETTINGS')
+    || normalizedType.includes('LOGS')
+  ) {
+    targets.add('workspaces');
+    targets.add('overview');
+  }
+
+  if (
+    normalizedType === 'ADMIN_AUDIT'
+    || normalizedType.startsWith('ADMIN_')
+    || normalizedType.startsWith('GUARD_')
+  ) {
+    targets.add('audit');
+    targets.add('overview');
+  }
+
+  if (
+    normalizedType.includes('AWS')
+    || normalizedType.includes('LAMBDA')
+    || normalizedType.includes('CLOUDFRONT')
+    || normalizedType.includes('CLOUDWATCH')
+    || normalizedType.includes('DYNAMODB')
+    || normalizedType.includes('S3')
+    || normalizedType.includes('BILLING')
+  ) {
+    targets.add('aws');
+  }
+
+  return targets;
+}
+
 function handleAdminWsMessage(raw) {
   let message = null;
   try { message = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return; }
   if (!message?.type) return;
   const normalized = String(message.type).toUpperCase();
-  if (normalized.includes('AUDIT') || normalized.includes('ADMIN') || normalized.includes('MUTATION') || normalized.includes('EVENT')) {
-    adminState.audit = [message.data || message, ...adminState.audit].slice(0, 200);
+  if (normalized === 'ADMIN_AUDIT' && message.data && typeof message.data === 'object') {
+    adminState.audit = [message.data, ...adminState.audit].slice(0, 200);
     renderAudit();
     refreshOverviewFromState();
   }
-  if (normalized.includes('USER')) loadUsers({ force: true });
-  if (normalized.includes('WORKSPACE')) loadWorkspaces({ force: true });
+  const targets = [...resolveWsRefreshTargets(normalized)];
+  queueRealtimeRefresh(targets);
 }
 
 async function connectAdminWebSocket() {
@@ -1361,7 +1451,14 @@ async function connectAdminWebSocket() {
   adminState.wsShouldReconnect = true;
   const socket = new WebSocket(wsUrl);
   adminState.ws = socket;
-  socket.onopen = () => { adminState.wsReconnectDelay = 2000; };
+  socket.onopen = () => {
+    const hadPreviousConnection = adminState.wsConnectedOnce;
+    adminState.wsConnectedOnce = true;
+    adminState.wsReconnectDelay = 2000;
+    if (hadPreviousConnection) {
+      queueRealtimeRefresh(['overview', 'aws', 'users', 'workspaces', 'audit']);
+    }
+  };
   socket.onmessage = (event) => handleAdminWsMessage(event.data);
   socket.onclose = () => { if (adminState.ws === socket) adminState.ws = null; scheduleAdminWsReconnect(); };
   socket.onerror = (error) => console.error('Admin WebSocket error', error);
@@ -1410,6 +1507,17 @@ function bindEvents() {
   document.getElementById('entityLookup')?.addEventListener('input', filterAndRenderEntityTargets);
   document.getElementById('entityLookup')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); inspectEntity(event.currentTarget.value || ''); } });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeGuardModal(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (!adminState.ws || adminState.ws.readyState === WebSocket.CLOSED) connectAdminWebSocket();
+  });
+  window.addEventListener('beforeunload', () => {
+    if (adminState.wsRealtimeTimer) {
+      clearTimeout(adminState.wsRealtimeTimer);
+      adminState.wsRealtimeTimer = null;
+    }
+    disconnectAdminWebSocket(false);
+  });
 }
 
 async function bootstrapAdmin() {

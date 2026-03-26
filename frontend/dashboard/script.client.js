@@ -79,6 +79,7 @@ function redirectToLoginWithReturnTo(returnToPath = getCurrentReturnToPath()) {
 if (!token) {
   redirectToLoginWithReturnTo();
 }
+setAdminNavVisibility(false);
 
 // Global State
 let allWorkspaces = [];
@@ -92,6 +93,24 @@ let dashboardWsShouldReconnect = true;
 let dashboardWsReconnectDelayMs = 2000;
 let dashboardRealtimeRefreshTimer = null;
 let dashboardFetchWrapped = false;
+
+function setAdminNavVisibility(canAccess) {
+  const adminNavItem = document.getElementById('adminNavItem');
+  if (!adminNavItem) return;
+  if (canAccess) {
+    adminNavItem.classList.remove('hidden');
+    adminNavItem.classList.add('flex');
+    adminNavItem.style.display = '';
+    adminNavItem.removeAttribute('hidden');
+    adminNavItem.removeAttribute('aria-hidden');
+    return;
+  }
+  adminNavItem.classList.add('hidden');
+  adminNavItem.classList.remove('flex');
+  adminNavItem.style.display = 'none';
+  adminNavItem.setAttribute('hidden', 'hidden');
+  adminNavItem.setAttribute('aria-hidden', 'true');
+}
 
 function scheduleDashboardRealtimeRefresh(delay = 300) {
   if (dashboardRealtimeRefreshTimer) clearTimeout(dashboardRealtimeRefreshTimer);
@@ -417,16 +436,7 @@ async function loadUserProfile() {
       // Update sidebar
       document.getElementById('sidebarUsername').textContent = data.user.display_name || 'User';
       document.getElementById('sidebarEmail').textContent = data.user.email;
-      const adminNavItem = document.getElementById('adminNavItem');
-      if (adminNavItem) {
-        if (currentUserRole === 'admin' && data.user.status === 'active') {
-          adminNavItem.classList.remove('hidden');
-          adminNavItem.classList.add('flex');
-        } else {
-          adminNavItem.classList.add('hidden');
-          adminNavItem.classList.remove('flex');
-        }
-      }
+      setAdminNavVisibility(currentUserRole === 'admin' && data.user.status === 'active');
       
       // Update settings form
       document.getElementById('settingsDisplayName').value = data.user.display_name || '';

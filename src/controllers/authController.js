@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { storage } from '../services/storage.js';
 import { nowIso, randomId, sortByDateDesc, unixNow } from '../utils/common.js';
 import { destroyWorkspaceData } from './workspaceController.js';
+import { broadcastAdminEvent } from '../utils/realtime.js';
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -75,8 +76,9 @@ export async function register(request) {
   if (await usersRepo.findByEmail(email)) return jsonResponse(409, { success: false, error: 'Email already exists' });
 
   try {
+    const newUserId = randomId();
     await usersRepo.create({
-      id: randomId(),
+      id: newUserId,
       email,
       password: await hashPassword(password),
       display_name: '',
@@ -85,6 +87,7 @@ export async function register(request) {
       created_at: nowIso(),
       password_changed_at: 0
     });
+    await broadcastAdminEvent('USER_REGISTERED', { user_id: newUserId, email });
     return jsonResponse(201, { success: true, message: 'Account created' });
   } catch (error) {
     console.error('register error', error);
@@ -118,7 +121,9 @@ export async function updateProfile(request) {
   const payload = parseJsonBody(request);
   if (!payload) return jsonResponse(400, { success: false, error: 'Invalid JSON' });
 
-  await usersRepo.update(userId, { display_name: String(payload.display_name || '') });
+  const displayName = String(payload.display_name || '');
+  await usersRepo.update(userId, { display_name: displayName });
+  await broadcastAdminEvent('USER_PROFILE_UPDATED', { user_id: String(userId), display_name: displayName });
   return jsonResponse(200, { success: true, message: 'Profile updated' });
 }
 
@@ -140,6 +145,8 @@ export async function changePassword(request) {
     password: await hashPassword(String(payload.newPassword)),
     password_changed_at: unixNow()
   });
+
+  await broadcastAdminEvent('USER_PASSWORD_CHANGED', { user_id: String(userId) });
 
   return jsonResponse(200, { success: true, message: 'Password changed successfully' });
 }
@@ -167,6 +174,7 @@ export async function deleteAccount(request) {
     }
 
     await usersRepo.delete(userId);
+    await broadcastAdminEvent('USER_DELETED', { user_id: String(userId), source: 'self_service' });
     return jsonResponse(200, { success: true, message: 'Account deleted' }, {}, [createCookie('token', '', {
       path: '/',
       httpOnly: true,

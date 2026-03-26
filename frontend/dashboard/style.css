@@ -102,7 +102,7 @@ body {
 }
 
 /* Collapsed nav items: centered square icons */
-.sidebar.collapsed .nav-item {
+.sidebar.collapsed .nav-item:not(.hidden):not([aria-hidden="true"]) {
     width: 44px;
     height: 44px;
     padding: 0 !important;
@@ -112,6 +112,14 @@ body {
     align-items: center;
     justify-content: center;
     transform: none !important;
+}
+
+.sidebar #adminNavItem.hidden,
+.sidebar #adminNavItem[aria-hidden="true"],
+.sidebar.collapsed #adminNavItem.hidden,
+.sidebar.collapsed #adminNavItem[aria-hidden="true"],
+.sidebar.collapsed #adminNavItem[hidden] {
+    display: none !important;
 }
 
 .sidebar.collapsed .nav-item:hover {
