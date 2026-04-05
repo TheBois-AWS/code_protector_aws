@@ -10,11 +10,11 @@ on:
       stage:
         description: Deployment stage
         required: false
-        default: prod
+        default: prod4
       stack_name:
         description: CloudFormation stack name
         required: false
-        default: ""
+        default: code-protector-aws-prod4-stack
   push:
     branches:
       - main
@@ -38,8 +38,8 @@ jobs:
       contents: read
     env:
       AWS_REGION: ${{ github.event.inputs.aws_region || vars.AWS_REGION || 'ap-southeast-2' }}
-      STAGE: ${{ github.event.inputs.stage || vars.STAGE || 'prod' }}
-      STACK_NAME: ${{ github.event.inputs.stack_name || vars.STACK_NAME || 'code-protector-aws-prod-stack' }}
+      STAGE: ${{ github.event.inputs.stage || vars.STAGE || 'prod4' }}
+      STACK_NAME: ${{ github.event.inputs.stack_name || vars.STACK_NAME || 'code-protector-aws-prod4-stack' }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME || 'code-protector-aws' }}
       ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS || '*' }}
       FRONTEND_BUCKET_NAME: ${{ vars.FRONTEND_BUCKET_NAME || '' }}
