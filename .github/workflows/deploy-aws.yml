@@ -44,7 +44,8 @@ jobs:
       ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS || '*' }}
       FRONTEND_BUCKET_NAME: ${{ vars.FRONTEND_BUCKET_NAME || '' }}
       CONTENT_BUCKET_NAME: ${{ vars.CONTENT_BUCKET_NAME || '' }}
-      WAF_WEB_ACL_ARN: ${{ vars.WAF_WEB_ACL_ARN || '' }}
+      ENABLE_MANAGED_WAF: ${{ vars.ENABLE_MANAGED_WAF || 'false' }}
+      WAF_WEB_ACL_ARN: ${{ vars.WAF_WEB_ACL_ARN }}
       LAMBDA_ARTIFACT_BUCKET: ${{ vars.LAMBDA_ARTIFACT_BUCKET || '' }}
       LAMBDA_MEMORY_SIZE: ${{ vars.LAMBDA_MEMORY_SIZE || '1024' }}
       LAMBDA_TIMEOUT: ${{ vars.LAMBDA_TIMEOUT || '30' }}
@@ -76,6 +77,26 @@ jobs:
             echo "Missing repository variable: LAMBDA_ARTIFACT_BUCKET" >&2
             exit 1
           fi
+
+      - name: Resolve WAF Configuration
+        id: resolve_waf
+        shell: bash
+        env:
+          WAF_WEB_ACL_ARN_SECRET: ${{ secrets.WAF_WEB_ACL_ARN }}
+        run: |
+          set -euo pipefail
+
+          RESOLVED_WAF_WEB_ACL_ARN="${WAF_WEB_ACL_ARN:-}"
+          if [ -z "${RESOLVED_WAF_WEB_ACL_ARN}" ]; then
+            RESOLVED_WAF_WEB_ACL_ARN="${WAF_WEB_ACL_ARN_SECRET:-}"
+          fi
+
+          if [ "${ENABLE_MANAGED_WAF}" = "true" ] && [ -z "${RESOLVED_WAF_WEB_ACL_ARN}" ]; then
+            echo "ENABLE_MANAGED_WAF=true but WAF_WEB_ACL_ARN is not set (repo variable or secret)." >&2
+            exit 1
+          fi
+
+          echo "resolved_waf_web_acl_arn=${RESOLVED_WAF_WEB_ACL_ARN}" >> "$GITHUB_OUTPUT"
 
       - name: Ensure Lambda Artifact Bucket Exists
         shell: bash
@@ -141,8 +162,8 @@ jobs:
           if [ -n "${CONTENT_BUCKET_NAME}" ]; then
             PARAMS+=("ContentBucketName=${CONTENT_BUCKET_NAME}")
           fi
-          if [ -n "${WAF_WEB_ACL_ARN}" ]; then
-            PARAMS+=("WebAclArn=${WAF_WEB_ACL_ARN}")
+          if [ -n "${{ steps.resolve_waf.outputs.resolved_waf_web_acl_arn }}" ]; then
+            PARAMS+=("WebAclArn=${{ steps.resolve_waf.outputs.resolved_waf_web_acl_arn }}")
           fi
 
           aws cloudformation deploy \
@@ -283,7 +304,8 @@ jobs:
             echo "- Frontend: https://${{ steps.stack_outputs.outputs.domain }}"
             echo "- Frontend bucket: \`${{ steps.stack_outputs.outputs.frontend_bucket }}\`"
             echo "- Content bucket: \`${{ steps.stack_outputs.outputs.content_bucket }}\`"
-            echo "- WAF Web ACL ARN: \`${WAF_WEB_ACL_ARN:-<not-set>}\`"
+            echo "- WAF mode: \`${ENABLE_MANAGED_WAF}\`"
+            echo "- WAF Web ACL ARN: \`${{ steps.resolve_waf.outputs.resolved_waf_web_acl_arn || '<not-set>' }}\`"
             echo "- API URL: ${{ steps.stack_outputs.outputs.api_url }}"
             echo "- Lambda artifact: s3://${LAMBDA_ARTIFACT_BUCKET}/${{ steps.lambda_artifact.outputs.lambda_key }}"
           } >> "$GITHUB_STEP_SUMMARY"
