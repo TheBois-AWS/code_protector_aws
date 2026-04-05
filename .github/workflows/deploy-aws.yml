@@ -48,6 +48,7 @@ jobs:
       CLOUDFRONT_ACM_CERTIFICATE_ARN: ${{ vars.CLOUDFRONT_ACM_CERTIFICATE_ARN || 'arn:aws:acm:us-east-1:991940085379:certificate/bdbaf106-025c-4858-ac7f-b26f531fb51f' }}
       ENABLE_MANAGED_WAF: 'true'
       WAF_WEB_ACL_ARN: ${{ vars.WAF_WEB_ACL_ARN }}
+      API_ORIGIN_VERIFY_SECRET: ${{ vars.API_ORIGIN_VERIFY_SECRET }}
       LAMBDA_ARTIFACT_BUCKET: ${{ vars.LAMBDA_ARTIFACT_BUCKET || '' }}
       LAMBDA_MEMORY_SIZE: ${{ vars.LAMBDA_MEMORY_SIZE || '1024' }}
       LAMBDA_TIMEOUT: ${{ vars.LAMBDA_TIMEOUT || '30' }}
@@ -110,6 +111,27 @@ jobs:
 
           echo "resolved_waf_web_acl_arn=${RESOLVED_WAF_WEB_ACL_ARN}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve API Origin Lock Secret
+        id: resolve_origin_lock
+        shell: bash
+        env:
+          API_ORIGIN_VERIFY_SECRET_SECRET: ${{ secrets.API_ORIGIN_VERIFY_SECRET }}
+        run: |
+          set -euo pipefail
+
+          RESOLVED_API_ORIGIN_VERIFY_SECRET="${API_ORIGIN_VERIFY_SECRET:-}"
+          if [ -z "${RESOLVED_API_ORIGIN_VERIFY_SECRET}" ]; then
+            RESOLVED_API_ORIGIN_VERIFY_SECRET="${API_ORIGIN_VERIFY_SECRET_SECRET:-}"
+          fi
+
+          if [ -z "${RESOLVED_API_ORIGIN_VERIFY_SECRET}" ]; then
+            RESOLVED_API_ORIGIN_VERIFY_SECRET="$(openssl rand -hex 32)"
+            echo "Generated ephemeral API origin verify secret for this deployment."
+          fi
+
+          echo "::add-mask::${RESOLVED_API_ORIGIN_VERIFY_SECRET}"
+          echo "origin_verify_secret=${RESOLVED_API_ORIGIN_VERIFY_SECRET}" >> "$GITHUB_OUTPUT"
+
       - name: Ensure Lambda Artifact Bucket Exists
         shell: bash
         run: |
@@ -166,6 +188,7 @@ jobs:
             "LambdaLogRetentionDays=${LAMBDA_LOG_RETENTION_DAYS}"
             "ManageApiLogGroup=${MANAGE_API_LOG_GROUP}"
             "EnableCloudWatchAlarms=${ENABLE_CLOUDWATCH_ALARMS}"
+            "ApiOriginVerifySecret=${{ steps.resolve_origin_lock.outputs.origin_verify_secret }}"
           )
 
           if [ -n "${FRONTEND_BUCKET_NAME}" ]; then
@@ -323,6 +346,7 @@ jobs:
             echo "- Frontend custom domain: \`${FRONTEND_DOMAIN_NAME:-<not-set>}\`"
             echo "- Frontend bucket: \`${{ steps.stack_outputs.outputs.frontend_bucket }}\`"
             echo "- Content bucket: \`${{ steps.stack_outputs.outputs.content_bucket }}\`"
+            echo "- API origin lock: \`enabled (CloudFront secret header)\`"
             echo "- WAF mode: \`${ENABLE_MANAGED_WAF}\`"
             echo "- WAF Web ACL ARN: \`${{ steps.resolve_waf.outputs.resolved_waf_web_acl_arn || '<not-set>' }}\`"
             echo "- API URL: ${{ steps.stack_outputs.outputs.api_url }}"

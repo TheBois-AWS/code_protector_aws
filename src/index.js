@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import { routeRequest } from './router.js';
 import { getCorsHeaders, jsonResponse } from './utils/http.js';
 import { handleWebSocketEvent } from './websocket.js';
+import { config } from './config.js';
 
 function normalizeHeaders(rawHeaders = {}) {
   const normalized = {};
@@ -48,6 +50,26 @@ function isWebSocketEvent(event = {}) {
   return !!(event?.requestContext?.connectionId && event?.requestContext?.routeKey);
 }
 
+function isOriginLockedPath(path = '') {
+  return path === '/api' || path.startsWith('/api/') || path === '/files' || path.startsWith('/files/');
+}
+
+function timingSafeEquals(left = '', right = '') {
+  const leftBuffer = Buffer.from(String(left), 'utf-8');
+  const rightBuffer = Buffer.from(String(right), 'utf-8');
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function hasValidOriginVerifyHeader(request) {
+  const expected = config.apiOriginVerifySecret;
+  if (!expected || config.lambdaMode !== 'lambda') return true;
+
+  const headerName = (config.apiOriginVerifyHeader || 'x-origin-verify').toLowerCase();
+  const provided = request.headers[headerName] || '';
+  return timingSafeEquals(provided, expected);
+}
+
 function applyCors(response, headers) {
   const corsHeaders = getCorsHeaders(headers);
   return {
@@ -72,6 +94,10 @@ export async function handler(event) {
       headers: {},
       body: ''
     }, request.headers);
+  }
+
+  if (isOriginLockedPath(request.path) && !hasValidOriginVerifyHeader(request)) {
+    return applyCors(jsonResponse(403, { success: false, error: 'Forbidden' }), request.headers);
   }
 
   try {

@@ -18,6 +18,10 @@ Parameters:
   WebAclArn:
     Type: String
     Default: ''
+  ApiOriginVerifySecret:
+    Type: String
+    Default: ''
+    NoEcho: true
   CloudFrontAliasDomain:
     Type: String
     Default: ''
@@ -80,6 +84,7 @@ Conditions:
   HasFrontendBucketName: !Not [!Equals [!Ref FrontendBucketName, '']]
   HasContentBucketName: !Not [!Equals [!Ref ContentBucketName, '']]
   HasWebAclArn: !Not [!Equals [!Ref WebAclArn, '']]
+  HasApiOriginVerifySecret: !Not [!Equals [!Ref ApiOriginVerifySecret, '']]
   HasCloudFrontAliasDomain: !Not [!Equals [!Ref CloudFrontAliasDomain, '']]
   HasCloudFrontAcmCertificateArn: !Not [!Equals [!Ref CloudFrontAcmCertificateArn, '']]
   UseCloudFrontCustomDomain: !And
@@ -296,6 +301,8 @@ Resources:
           DDB_TABLE_ADMIN_AUDIT: !Ref AdminAuditTable
           DDB_INDEX_ADMIN_AUDIT_BY_ACTOR: ActorIndex
           DDB_INDEX_ADMIN_AUDIT_BY_TARGET: TargetIndex
+          API_ORIGIN_VERIFY_SECRET: !Ref ApiOriginVerifySecret
+          API_ORIGIN_VERIFY_HEADER: x-origin-verify
           WS_API_ENDPOINT: !Sub 'https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
 
   ApiFunctionLogGroup:
@@ -646,6 +653,11 @@ Resources:
                   - !Split
                     - https://
                     - !GetAtt ApiFunctionUrl.FunctionUrl
+            OriginCustomHeaders: !If
+              - HasApiOriginVerifySecret
+              - - HeaderName: X-Origin-Verify
+                  HeaderValue: !Ref ApiOriginVerifySecret
+              - !Ref AWS::NoValue
             CustomOriginConfig:
               HTTPPort: 80
               HTTPSPort: 443

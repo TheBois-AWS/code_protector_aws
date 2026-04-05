@@ -122,6 +122,7 @@ Recommended repository variables:
 - `CLOUDFRONT_ACM_CERTIFICATE_ARN` (optional; ACM certificate ARN in `us-east-1`, required when `FRONTEND_DOMAIN_NAME` is set)
 - `ENABLE_MANAGED_WAF` (default `false`; set `true` to enforce WAF Web ACL usage)
 - `WAF_WEB_ACL_ARN` (required when `ENABLE_MANAGED_WAF=true`)
+- `API_ORIGIN_VERIFY_SECRET` (optional but recommended; if empty, deploy pipeline auto-generates one per run to lock direct Lambda URL access)
 - `LAMBDA_MEMORY_SIZE` (default `1024`)
 - `LAMBDA_TIMEOUT` (default `30`)
 - `LAMBDA_LOG_RETENTION_DAYS` (default `30`)
@@ -185,3 +186,4 @@ git push -u origin main
 - CloudWatch log retention is managed by template parameter `LambdaLogRetentionDays` via `ApiFunctionLogGroup`.
 - To avoid update failures on existing stacks, `ApiFunctionLogGroup` creation is controlled by `ManageApiLogGroup` (default `false`).
 - CloudWatch monitoring can be toggled by template parameter `EnableCloudWatchAlarms` (dashboard + alarms for errors/throttles/p95 duration).
+- API requests are origin-locked: CloudFront sends a private header (`X-Origin-Verify`) and Lambda rejects direct calls that do not include the expected secret.

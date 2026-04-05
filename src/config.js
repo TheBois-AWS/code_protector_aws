@@ -4,6 +4,8 @@ export const config = {
   baseUrl: process.env.APP_BASE_URL || '',
   wsApiEndpoint: process.env.WS_API_ENDPOINT || process.env.WEBSOCKET_API_ENDPOINT || '',
   allowedOrigins: (process.env.ALLOWED_ORIGINS || '*').split(',').map((value) => value.trim()).filter(Boolean),
+  apiOriginVerifySecret: process.env.API_ORIGIN_VERIFY_SECRET || '',
+  apiOriginVerifyHeader: (process.env.API_ORIGIN_VERIFY_HEADER || 'x-origin-verify').toLowerCase(),
   s3Bucket: process.env.APP_S3_BUCKET || process.env.S3_BUCKET || process.env.CONTENT_BUCKET || '',
   assetsBucket: process.env.APP_ASSETS_BUCKET || process.env.ASSETS_BUCKET || process.env.CONTENT_BUCKET || '',
   cookieSecure: process.env.COOKIE_SECURE !== 'false',
