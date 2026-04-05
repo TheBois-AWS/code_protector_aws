@@ -44,6 +44,7 @@ jobs:
       ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS || '*' }}
       FRONTEND_BUCKET_NAME: ${{ vars.FRONTEND_BUCKET_NAME || '' }}
       CONTENT_BUCKET_NAME: ${{ vars.CONTENT_BUCKET_NAME || '' }}
+      WAF_WEB_ACL_ARN: ${{ vars.WAF_WEB_ACL_ARN || '' }}
       LAMBDA_ARTIFACT_BUCKET: ${{ vars.LAMBDA_ARTIFACT_BUCKET || '' }}
       LAMBDA_MEMORY_SIZE: ${{ vars.LAMBDA_MEMORY_SIZE || '1024' }}
       LAMBDA_TIMEOUT: ${{ vars.LAMBDA_TIMEOUT || '30' }}
@@ -139,6 +140,9 @@ jobs:
           fi
           if [ -n "${CONTENT_BUCKET_NAME}" ]; then
             PARAMS+=("ContentBucketName=${CONTENT_BUCKET_NAME}")
+          fi
+          if [ -n "${WAF_WEB_ACL_ARN}" ]; then
+            PARAMS+=("WebAclArn=${WAF_WEB_ACL_ARN}")
           fi
 
           aws cloudformation deploy \
@@ -279,6 +283,7 @@ jobs:
             echo "- Frontend: https://${{ steps.stack_outputs.outputs.domain }}"
             echo "- Frontend bucket: \`${{ steps.stack_outputs.outputs.frontend_bucket }}\`"
             echo "- Content bucket: \`${{ steps.stack_outputs.outputs.content_bucket }}\`"
+            echo "- WAF Web ACL ARN: \`${WAF_WEB_ACL_ARN:-<not-set>}\`"
             echo "- API URL: ${{ steps.stack_outputs.outputs.api_url }}"
             echo "- Lambda artifact: s3://${LAMBDA_ARTIFACT_BUCKET}/${{ steps.lambda_artifact.outputs.lambda_key }}"
           } >> "$GITHUB_STEP_SUMMARY"

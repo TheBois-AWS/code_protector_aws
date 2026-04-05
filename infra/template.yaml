@@ -15,6 +15,9 @@ Parameters:
   ContentBucketName:
     Type: String
     Default: ''
+  WebAclArn:
+    Type: String
+    Default: ''
   AllowedOrigins:
     Type: CommaDelimitedList
     Default: '*'
@@ -70,6 +73,7 @@ Parameters:
 Conditions:
   HasFrontendBucketName: !Not [!Equals [!Ref FrontendBucketName, '']]
   HasContentBucketName: !Not [!Equals [!Ref ContentBucketName, '']]
+  HasWebAclArn: !Not [!Equals [!Ref WebAclArn, '']]
   CreateApiFunctionLogGroup: !Equals [!Ref ManageApiLogGroup, 'true']
   HasCloudWatchAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
 
@@ -688,6 +692,10 @@ Resources:
             Compress: false
         ViewerCertificate:
           CloudFrontDefaultCertificate: true
+        WebACLId: !If
+          - HasWebAclArn
+          - !Ref WebAclArn
+          - !Ref AWS::NoValue
 
   UsersTable:
     Type: AWS::DynamoDB::Table
@@ -1126,6 +1134,9 @@ Outputs:
   ApiDashboardName:
     Condition: HasCloudWatchAlarms
     Value: !Ref ApiDashboard
+  WebAclArn:
+    Condition: HasWebAclArn
+    Value: !Ref WebAclArn
   UsersTableName:
     Value: !Ref UsersTable
   WorkspacesTableName:
