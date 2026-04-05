@@ -282,6 +282,10 @@ Resources:
           APP_STAGE: !Ref Stage
           PROJECT_NAME: !Ref ProjectName
           API_FUNCTION_NAME: !Sub '${ProjectName}-${Stage}-api'
+          APP_BASE_URL: !If
+            - HasCloudFrontAliasDomain
+            - !Sub 'https://${CloudFrontAliasDomain}'
+            - ''
           ALLOWED_ORIGINS: !Join [',', !Ref AllowedOrigins]
           CONTENT_BUCKET: !Ref ContentBucket
           APP_ASSETS_BUCKET: !Ref FrontendBucket

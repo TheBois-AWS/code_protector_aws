@@ -6,6 +6,7 @@ import { appConfigRepo, projectsRepo, accessListsRepo, licensesRepo, projectFile
 import { getClientIp } from '../utils/http.js';
 import { checkRateLimit } from '../utils/rateLimit.js';
 import { nowIso, sortByDateDesc } from '../utils/common.js';
+import { config } from '../config.js';
 import {
   base64UrlEncode,
   deriveAesKey,
@@ -47,7 +48,14 @@ async function getOrCreateLoaderSecret() {
 }
 
 function getOrigin(request) {
-  const host = request.headers.host || request.headers.Host || 'localhost:3001';
+  const configuredBaseUrl = String(config.baseUrl || '').trim();
+  if (configuredBaseUrl) return configuredBaseUrl.replace(/\/+$/, '');
+
+  const host = request.headers['x-forwarded-host']
+    || request.headers['X-Forwarded-Host']
+    || request.headers.host
+    || request.headers.Host
+    || 'localhost:3001';
   const proto = (request.headers['x-forwarded-proto'] || request.headers['X-Forwarded-Proto'] || 'https').split(',')[0].trim();
   return `${proto}://${host}`;
 }
