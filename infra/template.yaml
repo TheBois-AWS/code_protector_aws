@@ -18,6 +18,12 @@ Parameters:
   WebAclArn:
     Type: String
     Default: ''
+  CloudFrontAliasDomain:
+    Type: String
+    Default: ''
+  CloudFrontAcmCertificateArn:
+    Type: String
+    Default: ''
   AllowedOrigins:
     Type: CommaDelimitedList
     Default: '*'
@@ -74,6 +80,11 @@ Conditions:
   HasFrontendBucketName: !Not [!Equals [!Ref FrontendBucketName, '']]
   HasContentBucketName: !Not [!Equals [!Ref ContentBucketName, '']]
   HasWebAclArn: !Not [!Equals [!Ref WebAclArn, '']]
+  HasCloudFrontAliasDomain: !Not [!Equals [!Ref CloudFrontAliasDomain, '']]
+  HasCloudFrontAcmCertificateArn: !Not [!Equals [!Ref CloudFrontAcmCertificateArn, '']]
+  UseCloudFrontCustomDomain: !And
+    - !Condition HasCloudFrontAliasDomain
+    - !Condition HasCloudFrontAcmCertificateArn
   CreateApiFunctionLogGroup: !Equals [!Ref ManageApiLogGroup, 'true']
   HasCloudWatchAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
 
@@ -616,6 +627,10 @@ Resources:
       DistributionConfig:
         Enabled: true
         DefaultRootObject: index.html
+        Aliases: !If
+          - HasCloudFrontAliasDomain
+          - - !Ref CloudFrontAliasDomain
+          - !Ref AWS::NoValue
         Origins:
           - Id: FrontendOrigin
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
@@ -690,8 +705,12 @@ Resources:
             CachePolicyId: !Ref NoCachePolicy
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
             Compress: false
-        ViewerCertificate:
-          CloudFrontDefaultCertificate: true
+        ViewerCertificate: !If
+          - UseCloudFrontCustomDomain
+          - AcmCertificateArn: !Ref CloudFrontAcmCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
         WebACLId: !If
           - HasWebAclArn
           - !Ref WebAclArn
@@ -1137,6 +1156,9 @@ Outputs:
   WebAclArn:
     Condition: HasWebAclArn
     Value: !Ref WebAclArn
+  CloudFrontAliasDomain:
+    Condition: HasCloudFrontAliasDomain
+    Value: !Ref CloudFrontAliasDomain
   UsersTableName:
     Value: !Ref UsersTable
   WorkspacesTableName:

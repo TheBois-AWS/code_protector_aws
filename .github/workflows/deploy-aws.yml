@@ -44,7 +44,9 @@ jobs:
       ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS || '*' }}
       FRONTEND_BUCKET_NAME: ${{ vars.FRONTEND_BUCKET_NAME || '' }}
       CONTENT_BUCKET_NAME: ${{ vars.CONTENT_BUCKET_NAME || '' }}
-      ENABLE_MANAGED_WAF: ${{ vars.ENABLE_MANAGED_WAF || 'false' }}
+      FRONTEND_DOMAIN_NAME: ${{ vars.FRONTEND_DOMAIN_NAME || 'guard-script.org' }}
+      CLOUDFRONT_ACM_CERTIFICATE_ARN: ${{ vars.CLOUDFRONT_ACM_CERTIFICATE_ARN || 'arn:aws:acm:us-east-1:991940085379:certificate/bdbaf106-025c-4858-ac7f-b26f531fb51f' }}
+      ENABLE_MANAGED_WAF: 'true'
       WAF_WEB_ACL_ARN: ${{ vars.WAF_WEB_ACL_ARN }}
       LAMBDA_ARTIFACT_BUCKET: ${{ vars.LAMBDA_ARTIFACT_BUCKET || '' }}
       LAMBDA_MEMORY_SIZE: ${{ vars.LAMBDA_MEMORY_SIZE || '1024' }}
@@ -75,6 +77,16 @@ jobs:
           set -euo pipefail
           if [ -z "${LAMBDA_ARTIFACT_BUCKET}" ]; then
             echo "Missing repository variable: LAMBDA_ARTIFACT_BUCKET" >&2
+            exit 1
+          fi
+
+          if [ -n "${FRONTEND_DOMAIN_NAME}" ] && [ -z "${CLOUDFRONT_ACM_CERTIFICATE_ARN}" ]; then
+            echo "FRONTEND_DOMAIN_NAME is set but CLOUDFRONT_ACM_CERTIFICATE_ARN is empty." >&2
+            exit 1
+          fi
+
+          if [ -z "${FRONTEND_DOMAIN_NAME}" ] && [ -n "${CLOUDFRONT_ACM_CERTIFICATE_ARN}" ]; then
+            echo "CLOUDFRONT_ACM_CERTIFICATE_ARN is set but FRONTEND_DOMAIN_NAME is empty." >&2
             exit 1
           fi
 
@@ -161,6 +173,12 @@ jobs:
           fi
           if [ -n "${CONTENT_BUCKET_NAME}" ]; then
             PARAMS+=("ContentBucketName=${CONTENT_BUCKET_NAME}")
+          fi
+          if [ -n "${FRONTEND_DOMAIN_NAME}" ]; then
+            PARAMS+=("CloudFrontAliasDomain=${FRONTEND_DOMAIN_NAME}")
+          fi
+          if [ -n "${CLOUDFRONT_ACM_CERTIFICATE_ARN}" ]; then
+            PARAMS+=("CloudFrontAcmCertificateArn=${CLOUDFRONT_ACM_CERTIFICATE_ARN}")
           fi
           if [ -n "${{ steps.resolve_waf.outputs.resolved_waf_web_acl_arn }}" ]; then
             PARAMS+=("WebAclArn=${{ steps.resolve_waf.outputs.resolved_waf_web_acl_arn }}")
@@ -302,6 +320,7 @@ jobs:
             echo "- Stack: \`${STACK_NAME}\`"
             echo "- Region: \`${AWS_REGION}\`"
             echo "- Frontend: https://${{ steps.stack_outputs.outputs.domain }}"
+            echo "- Frontend custom domain: \`${FRONTEND_DOMAIN_NAME:-<not-set>}\`"
             echo "- Frontend bucket: \`${{ steps.stack_outputs.outputs.frontend_bucket }}\`"
             echo "- Content bucket: \`${{ steps.stack_outputs.outputs.content_bucket }}\`"
             echo "- WAF mode: \`${ENABLE_MANAGED_WAF}\`"
