@@ -1,0 +1,83 @@
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  color-scheme: dark;
+
+  --font-sans: 'Sora', 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+
+  --color-bg-0: #040b16;
+  --color-bg-1: #0a1729;
+  --color-bg-2: #102842;
+  --color-surface-0: rgba(12, 27, 45, 0.84);
+  --color-surface-1: rgba(16, 34, 57, 0.9);
+  --color-surface-2: rgba(21, 46, 74, 0.94);
+  --color-border: rgba(138, 181, 226, 0.26);
+  --color-border-strong: rgba(138, 181, 226, 0.42);
+  --color-text: #e7f3ff;
+  --color-text-muted: #a7c0dc;
+  --color-text-soft: #7f98b7;
+
+  --color-primary-400: #48b6ff;
+  --color-primary-500: #2d9ef2;
+  --color-primary-600: #1f83cd;
+  --color-cyan-400: #32d5df;
+  --color-success: #2fc382;
+  --color-warning: #f6b864;
+  --color-danger: #ef6d7f;
+
+  --shadow-sm: 0 8px 18px rgba(3, 11, 22, 0.22);
+  --shadow-md: 0 16px 30px rgba(3, 11, 22, 0.3);
+  --shadow-lg: 0 26px 56px rgba(3, 11, 22, 0.4);
+
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+
+  --container-sm: 640px;
+  --container-md: 768px;
+  --container-lg: 1024px;
+  --container-xl: 1280px;
+
+  --motion-fast: 140ms ease;
+  --motion-base: 220ms ease;
+  --motion-slow: 320ms ease;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg-0: #f2f8ff;
+  --color-bg-1: #e7f1fb;
+  --color-bg-2: #dceaf9;
+  --color-surface-0: rgba(255, 255, 255, 0.88);
+  --color-surface-1: rgba(247, 251, 255, 0.92);
+  --color-surface-2: rgba(236, 245, 255, 0.96);
+  --color-border: rgba(76, 120, 165, 0.28);
+  --color-border-strong: rgba(54, 100, 149, 0.42);
+  --color-text: #11253a;
+  --color-text-muted: #425f7f;
+  --color-text-soft: #6483a7;
+
+  --color-primary-400: #3e93db;
+  --color-primary-500: #2676bf;
+  --color-primary-600: #1f629f;
+  --color-cyan-400: #1096a4;
+  --color-success: #1f9a68;
+  --color-warning: #b97f2b;
+  --color-danger: #c44e62;
+
+  --shadow-sm: 0 8px 16px rgba(16, 38, 61, 0.08);
+  --shadow-md: 0 14px 28px rgba(16, 38, 61, 0.12);
+  --shadow-lg: 0 24px 46px rgba(16, 38, 61, 0.16);
+}

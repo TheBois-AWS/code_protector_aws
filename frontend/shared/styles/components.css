@@ -1,0 +1,406 @@
+.brand-word-guard {
+  color: var(--color-text);
+}
+
+.brand-word-script {
+  background: linear-gradient(95deg, var(--color-primary-400), var(--color-cyan-400));
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.btn,
+.btn-primary,
+.btn-outline,
+.btn-danger,
+.quick-action,
+.theme-toggle,
+.action-btn,
+.quick-action-btn,
+.limit-save-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 40px;
+  padding: 0.62rem 0.95rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: transform var(--motion-fast), box-shadow var(--motion-fast), border-color var(--motion-fast), background var(--motion-fast), color var(--motion-fast);
+}
+
+.btn-primary {
+  color: #f6fbff;
+  border-color: color-mix(in srgb, var(--color-primary-400) 72%, white 28%);
+  background: linear-gradient(135deg, var(--color-primary-500), var(--color-primary-400));
+  box-shadow: 0 10px 20px color-mix(in srgb, var(--color-primary-600) 38%, transparent);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(135deg, var(--color-primary-600), var(--color-primary-500));
+  box-shadow: 0 14px 25px color-mix(in srgb, var(--color-primary-600) 42%, transparent);
+}
+
+.btn-outline,
+.quick-action,
+.action-btn,
+.quick-action-btn,
+.limit-save-btn,
+.theme-toggle {
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+  background: color-mix(in srgb, var(--color-surface-1) 90%, transparent);
+}
+
+.btn-outline:hover,
+.quick-action:hover,
+.action-btn:hover,
+.quick-action-btn:hover,
+.limit-save-btn:hover,
+.theme-toggle:hover {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+  background: color-mix(in srgb, var(--color-surface-2) 92%, transparent);
+}
+
+.btn-danger,
+.action-btn.danger,
+.quick-action-btn.danger {
+  color: #ffd8de;
+  border-color: color-mix(in srgb, var(--color-danger) 44%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 20%, transparent);
+}
+
+.btn-danger:hover,
+.action-btn.danger:hover,
+.quick-action-btn.danger:hover {
+  color: #ffe8eb;
+  border-color: color-mix(in srgb, var(--color-danger) 62%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 28%, transparent);
+}
+
+.sidebar,
+.stat-card,
+.workspace-card,
+.admin-card,
+.modal-content,
+.data-table,
+.panel,
+.surface {
+  background: linear-gradient(170deg, color-mix(in srgb, var(--color-surface-2) 92%, transparent), color-mix(in srgb, var(--color-surface-0) 96%, transparent));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.sidebar {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.stat-card,
+.workspace-card,
+.admin-card {
+  overflow: hidden;
+  position: relative;
+}
+
+.stat-card::before,
+.workspace-card::before,
+.admin-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-primary-400) 58%, transparent), transparent);
+}
+
+.quick-action,
+.quick-action-btn,
+.action-btn,
+.limit-save-btn,
+.theme-toggle {
+  width: auto;
+}
+
+.icon-box {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--color-primary-400) 38%, transparent);
+  background: color-mix(in srgb, var(--color-primary-500) 16%, transparent);
+}
+
+.icon-box.emerald {
+  border-color: color-mix(in srgb, var(--color-success) 44%, transparent);
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+}
+
+.icon-box.rose {
+  border-color: color-mix(in srgb, var(--color-danger) 42%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+}
+
+.icon-box.amber {
+  border-color: color-mix(in srgb, var(--color-warning) 48%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+}
+
+.icon-box.cyan {
+  border-color: color-mix(in srgb, var(--color-cyan-400) 48%, transparent);
+  background: color-mix(in srgb, var(--color-cyan-400) 16%, transparent);
+}
+
+.nav-item {
+  border-radius: 12px;
+  color: var(--color-text-muted);
+  transition: transform var(--motion-fast), background var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+.nav-item:hover {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-primary-500) 14%, transparent);
+  transform: translateX(2px);
+}
+
+.nav-item.active {
+  color: var(--color-text);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-primary-500) 30%, transparent), color-mix(in srgb, var(--color-primary-500) 7%, transparent));
+  box-shadow: inset 2px 0 0 var(--color-primary-400);
+}
+
+.theme-toggle {
+  width: 100%;
+}
+
+.view-panel {
+  display: none;
+}
+
+.view-panel.active {
+  display: block;
+  animation: panel-rise 220ms ease;
+}
+
+@keyframes panel-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.network-status-banner {
+  position: fixed;
+  top: 0.85rem;
+  left: 50%;
+  transform: translate(-50%, -130%);
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 52%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 16%, var(--color-surface-1));
+  color: color-mix(in srgb, var(--color-warning) 56%, var(--color-text));
+  padding: 0.52rem 0.75rem;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--motion-base);
+}
+
+.network-status-banner.show {
+  transform: translate(-50%, 0);
+}
+
+.network-status-banner button {
+  width: auto;
+  min-height: 28px;
+  padding: 0.3rem 0.62rem;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 48%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: inherit;
+  font-size: 0.76rem;
+}
+
+.network-status-banner button:hover {
+  background: color-mix(in srgb, var(--color-warning) 32%, transparent);
+}
+
+.mobile-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  opacity: 0;
+  pointer-events: none;
+  background: rgba(2, 8, 16, 0.55);
+  backdrop-filter: blur(2px);
+  transition: opacity var(--motion-base);
+}
+
+.mobile-sidebar-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.modal-backdrop,
+[id$="Modal"] {
+  backdrop-filter: blur(3px);
+}
+
+.modal-content {
+  border-radius: var(--radius-lg);
+}
+
+.admin-table-wrap,
+.data-table {
+  overflow: auto;
+}
+
+.admin-table,
+.data-table table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 680px;
+}
+
+.admin-table th,
+.admin-table td,
+.data-table th,
+.data-table td {
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.75rem 0.9rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-table th,
+.data-table th {
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-soft);
+}
+
+.admin-table tbody tr:hover,
+.data-table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-primary-500) 10%, transparent);
+}
+
+.badge,
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 0.22rem 0.52rem;
+}
+
+.badge-success,
+.role-badge.admin {
+  color: color-mix(in srgb, var(--color-success) 72%, white 28%);
+  border: 1px solid color-mix(in srgb, var(--color-success) 42%, transparent);
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+}
+
+.role-badge.editor {
+  color: color-mix(in srgb, var(--color-primary-400) 82%, white 18%);
+  border: 1px solid color-mix(in srgb, var(--color-primary-400) 42%, transparent);
+  background: color-mix(in srgb, var(--color-primary-500) 16%, transparent);
+}
+
+.role-badge.viewer {
+  color: color-mix(in srgb, var(--color-cyan-400) 76%, white 24%);
+  border: 1px solid color-mix(in srgb, var(--color-cyan-400) 44%, transparent);
+  background: color-mix(in srgb, var(--color-cyan-400) 16%, transparent);
+}
+
+.status-message {
+  display: none;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  padding: 0.72rem 0.85rem;
+  font-size: 0.84rem;
+}
+
+.status-message.show {
+  display: block;
+}
+
+.status-message.success {
+  border-color: color-mix(in srgb, var(--color-success) 52%, transparent);
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+  color: color-mix(in srgb, var(--color-success) 72%, white 28%);
+}
+
+.status-message.error {
+  border-color: color-mix(in srgb, var(--color-danger) 56%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+  color: color-mix(in srgb, var(--color-danger) 76%, white 24%);
+}
+
+.status-message.info {
+  border-color: color-mix(in srgb, var(--color-primary-400) 52%, transparent);
+  background: color-mix(in srgb, var(--color-primary-500) 14%, transparent);
+  color: color-mix(in srgb, var(--color-primary-400) 74%, white 26%);
+}
+
+.permission-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+  filter: grayscale(0.22);
+}
+
+.skeleton {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-surface-2) 80%, transparent), color-mix(in srgb, var(--color-primary-500) 24%, transparent), color-mix(in srgb, var(--color-surface-2) 80%, transparent));
+  background-size: 180% 100%;
+  animation: skeleton-wave 1.2s linear infinite;
+}
+
+@keyframes skeleton-wave {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -180% 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    backdrop-filter: blur(12px);
+  }
+
+  .quick-action,
+  .quick-action-btn {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .network-status-banner {
+    width: calc(100% - 1rem);
+    justify-content: center;
+    left: 0.5rem;
+    right: 0.5rem;
+    transform: translate(0, -130%);
+  }
+
+  .network-status-banner.show {
+    transform: translate(0, 0);
+  }
+}

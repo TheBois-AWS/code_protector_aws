@@ -4,8 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Workspace - IrisAuth</title>
+    <title>Workspace | GuardScript</title>
     <link rel="icon" type="image/png" href="/assets/anhnen2.png">
+    <link rel="stylesheet" href="/shared/styles/tokens.css">
+    <link rel="stylesheet" href="/shared/styles/base.css">
+    <link rel="stylesheet" href="/shared/styles/components.css">
+    <link rel="stylesheet" href="/shared/styles/utilities.css">
     <link rel="stylesheet" href="/workspace/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -69,7 +73,7 @@
         <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
             <div class="p-4 md:p-5 border-b border-[#27272a]/50 flex-shrink-0">
                 <div class="flex items-center gap-3 mb-4 cursor-pointer group justify-between"
-                    onclick="window.location.href='/dashboard'">
+                    data-action-click="window.location.href='/dashboard'">
                     <div class="flex items-center gap-2">
                         <div class="p-1.5 rounded-lg bg-[#27272a] group-hover:bg-[#3f3f46] transition-colors">
                             <i data-lucide="arrow-left"
@@ -77,7 +81,7 @@
                         </div>
                         <span class="sidebar-label text-sm text-gray-400 group-hover:text-white transition-colors">Dashboard</span>
                     </div>
-                    <button class="hidden md:flex items-center justify-center w-6 h-6 rounded-lg hover:bg-[#27272a] transition-colors shrink-0" onclick="event.stopPropagation(); toggleSidebar()" title="Toggle sidebar">
+                    <button class="hidden md:flex items-center justify-center w-6 h-6 rounded-lg hover:bg-[#27272a] transition-colors shrink-0" data-action-click="event.stopPropagation(); toggleSidebar()" title="Toggle sidebar">
                         <i data-lucide="chevrons-left" class="w-3 h-3 text-gray-400"></i>
                     </button>
                 </div>
@@ -98,7 +102,7 @@
                 <div
                     class="hidden md:block text-[10px] font-semibold text-gray-600 uppercase tracking-widest mb-2 px-3 sidebar-label">
                     General</div>
-                <a onclick="switchView('overview')" id="nav-overview"
+                <a data-action-click="switchView('overview')" id="nav-overview"
                     class="nav-item flex items-center gap-3 px-3 py-2.5 cursor-pointer text-sm font-medium text-gray-400">
                     <i data-lucide="layout-dashboard" class="w-4 h-4 shrink-0"></i>
                     <span class="sidebar-label">Overview</span>
@@ -107,7 +111,7 @@
                 <div
                     class="hidden md:block text-[10px] font-semibold text-gray-600 uppercase tracking-widest mt-5 mb-2 px-3 sidebar-label">
                     Development</div>
-                <a onclick="switchView('projects')" id="nav-projects"
+                <a data-action-click="switchView('projects')" id="nav-projects"
                     class="nav-item flex items-center gap-3 px-3 py-2.5 cursor-pointer text-sm font-medium text-gray-400 active">
                     <i data-lucide="folder-code" class="w-4 h-4 shrink-0"></i>
                     <span class="sidebar-label">Projects</span>
@@ -117,12 +121,12 @@
                     class="hidden md:block text-[10px] font-semibold text-gray-600 uppercase tracking-widest mt-5 mb-2 px-3 sidebar-label">
                     Protection
                 </div>
-                <a onclick="switchView('licenses')" id="nav-licenses"
+                <a data-action-click="switchView('licenses')" id="nav-licenses"
                     class="nav-item flex items-center gap-3 px-3 py-2.5 cursor-pointer text-sm font-medium text-gray-400">
                     <i data-lucide="key" class="w-4 h-4 shrink-0"></i>
                     <span class="sidebar-label">Licenses</span>
                 </a>
-                <a onclick="switchView('access')" id="nav-access"
+                <a data-action-click="switchView('access')" id="nav-access"
                     class="nav-item flex items-center gap-3 px-3 py-2.5 cursor-pointer text-sm font-medium text-gray-400">
                     <i data-lucide="shield" class="w-4 h-4 shrink-0"></i>
                     <span class="sidebar-label">Access Control</span>
@@ -132,7 +136,7 @@
                     class="hidden md:block text-[10px] font-semibold text-gray-600 uppercase tracking-widest mt-5 mb-2 px-3 sidebar-label">
                     Monitor
                 </div>
-                <a onclick="switchView('logs')" id="nav-logs"
+                <a data-action-click="switchView('logs')" id="nav-logs"
                     class="nav-item flex items-center gap-3 px-3 py-2.5 cursor-pointer text-sm font-medium text-gray-400">
                     <i data-lucide="file-text" class="w-4 h-4 shrink-0"></i>
                     <span class="sidebar-label">Logs</span>
@@ -142,12 +146,12 @@
                     class="hidden md:block text-[10px] font-semibold text-gray-600 uppercase tracking-widest mt-5 mb-2 px-3 sidebar-label">
                     Workspace
                 </div>
-                <a onclick="switchView('team')" id="nav-team"
+                <a data-action-click="switchView('team')" id="nav-team"
                     class="nav-item flex items-center gap-3 px-3 py-2.5 cursor-pointer text-sm font-medium text-gray-400">
                     <i data-lucide="users" class="w-4 h-4 shrink-0"></i>
                     <span class="sidebar-label">Team</span>
                 </a>
-                <a onclick="switchView('settings')" id="nav-settings"
+                <a data-action-click="switchView('settings')" id="nav-settings"
                     class="nav-item flex items-center gap-3 px-3 py-2.5 cursor-pointer text-sm font-medium text-gray-400">
                     <i data-lucide="settings" class="w-4 h-4 shrink-0"></i>
                     <span class="sidebar-label">Settings</span>
@@ -157,24 +161,24 @@
 
         <div class="p-3 md:p-4 border-t border-[#27272a]/50 flex flex-row md:flex-col gap-2 md:gap-0 md:space-y-2 flex-shrink-0">
             <!-- Theme Toggle -->
-            <button id="themeToggle" onclick="toggleTheme()" class="theme-toggle w-full" title="Toggle light/dark theme">
+            <button id="themeToggle" data-action-click="toggleTheme()" class="theme-toggle w-full" title="Toggle light/dark theme">
                 <i data-lucide="sun" class="w-4 h-4" id="themeIconSun" style="display:none"></i>
                 <i data-lucide="moon" class="w-4 h-4" id="themeIconMoon"></i>
                 <span id="themeLabel" class="sidebar-label">Light Mode</span>
             </button>
             <!-- Privacy Mode Toggle -->
-            <button id="privacyToggle" onclick="togglePrivacyMode()" class="privacy-toggle w-full"
+            <button id="privacyToggle" data-action-click="togglePrivacyMode()" class="privacy-toggle w-full"
                 title="Blur content when screen sharing">
                 <i data-lucide="shield" class="w-4 h-4 shrink-0"></i>
                 <span class="sidebar-label">Privacy Mode</span>
             </button>
 
-            <button onclick="showLoaderCode()"
+            <button data-action-click="showLoaderCode()"
                 class="w-full btn-primary flex items-center justify-center gap-2 text-white py-2.5 rounded-lg text-sm font-medium">
                 <i data-lucide="download" class="w-4 h-4 shrink-0"></i>
                 <span class="sidebar-label">Get Loader</span>
             </button>
-            <button onclick="document.getElementById('shortcutsModal').style.display='flex'"
+            <button data-action-click="document.getElementById('shortcutsModal').style.display='flex'"
                 class="w-full flex items-center justify-center gap-2 text-gray-500 hover:text-gray-300 py-2 text-xs transition-colors">
                 <i data-lucide="keyboard" class="w-3 h-3 shrink-0"></i>
                 <span class="sidebar-label">Shortcuts (Ctrl+/)</span>
@@ -302,7 +306,7 @@
                 <div class="stat-card p-6">
                     <div class="flex items-center justify-between mb-4">
                         <h3 class="text-lg font-semibold text-white">Recent Executions</h3>
-                        <button onclick="switchView('logs')" class="text-xs text-indigo-400 hover:text-indigo-300">View
+                        <button data-action-click="switchView('logs')" class="text-xs text-indigo-400 hover:text-indigo-300">View
                             All</button>
                     </div>
                     <div id="recentExecutions" class="space-y-3 max-h-48 overflow-y-auto">
@@ -335,16 +339,16 @@
             <div class="stat-card p-6">
                 <h3 class="text-lg font-semibold text-white mb-4">Quick Actions</h3>
                 <div class="flex flex-wrap gap-3">
-                    <button onclick="switchView('projects'); openCreateProjectModal()" class="quick-action">
+                    <button data-action-click="switchView('projects'); openCreateProjectModal()" class="quick-action">
                         <i data-lucide="plus" class="w-4 h-4"></i> New Project
                     </button>
-                    <button onclick="switchView('licenses'); openCreateLicenseModal()" class="quick-action">
+                    <button data-action-click="switchView('licenses'); openCreateLicenseModal()" class="quick-action">
                         <i data-lucide="key" class="w-4 h-4"></i> Issue License
                     </button>
-                    <button onclick="showLoaderCode()" class="quick-action">
+                    <button data-action-click="showLoaderCode()" class="quick-action">
                         <i data-lucide="download" class="w-4 h-4"></i> Get Loader
                     </button>
-                    <button onclick="switchView('logs')" class="quick-action">
+                    <button data-action-click="switchView('logs')" class="quick-action">
                         <i data-lucide="file-text" class="w-4 h-4"></i> View Logs
                     </button>
                 </div>
@@ -363,7 +367,7 @@
                         <p class="text-gray-500 text-sm">Manage and organize your protected projects</p>
                     </div>
                 </div>
-                <button onclick="openCreateProjectModal()"
+                <button data-action-click="openCreateProjectModal()"
                     class="btn-primary text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
                     <i data-lucide="plus" class="w-4 h-4"></i> New Project
                 </button>
@@ -373,10 +377,10 @@
             <div class="flex flex-wrap gap-3 mb-6">
                 <div class="flex-1 min-w-[200px] relative">
                     <i data-lucide="search" class="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2"></i>
-                    <input type="text" id="projectsSearch" onkeyup="filterProjects()" placeholder="Search projects..."
+                    <input type="text" id="projectsSearch" data-action-keyup="filterProjects()" placeholder="Search projects..."
                         class="w-full bg-[#18181b] border border-[#27272a] rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
                 </div>
-                <select id="projectsStatusFilter" onchange="filterProjects()"
+                <select id="projectsStatusFilter" data-action-change="filterProjects()"
                     class="bg-[#18181b] border border-[#27272a] rounded-lg px-4 py-2.5 text-sm text-gray-300">
                     <option value="all">All Status</option>
                     <option value="active">Active</option>
@@ -385,7 +389,7 @@
                     <option value="pending">Pending</option>
                     <option value="rejected">Rejected</option>
                 </select>
-                <button onclick="loadWorkspaceData()" class="quick-action px-3" title="Refresh">
+                <button data-action-click="loadWorkspaceData()" class="quick-action px-3" title="Refresh">
                     <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                 </button>
             </div>
@@ -415,7 +419,7 @@
             <!-- Editor Toolbar -->
             <div class="h-12 min-h-[48px] border-b border-[#27272a] flex items-center justify-between px-4 bg-[#18181b]">
                 <div class="flex items-center gap-3">
-                    <button onclick="switchView('projects')"
+                    <button data-action-click="switchView('projects')"
                         class="flex items-center gap-1 text-gray-400 hover:text-white transition-colors"
                         title="Back to Projects">
                         <i data-lucide="arrow-left" class="w-4 h-4"></i>
@@ -427,13 +431,13 @@
                 <div class="flex items-center gap-3">
                     <span id="saveStatus" class="text-xs text-gray-500"></span>
                     <div class="flex gap-2">
-                        <button onclick="formatCode()"
+                        <button data-action-click="formatCode()"
                             class="flex items-center gap-1.5 bg-[#27272a] hover:bg-[#3f3f46] text-gray-300 px-3 py-1.5 rounded text-xs font-medium transition-colors"
                             title="Format Code (Shift+Alt+F)">
                             <i data-lucide="align-left" class="w-3.5 h-3.5"></i>
                             <span class="hidden sm:inline">Format</span>
                         </button>
-                        <button id="primarySaveButton" onclick="savePrimaryAction()"
+                        <button id="primarySaveButton" data-action-click="savePrimaryAction()"
                             class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-xs font-medium transition-colors"
                             title="Save current file (Ctrl+S)">
                             <i data-lucide="save" class="w-3.5 h-3.5"></i>
@@ -452,16 +456,16 @@
                     <div class="flex items-center justify-between px-3 py-2 border-b border-[#27272a]/50">
                         <span class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Explorer</span>
                         <div class="flex items-center gap-0.5">
-                            <button onclick="createNewFile()" class="p-1 rounded hover:bg-[#27272a] text-gray-500 hover:text-gray-300 transition-colors" title="New File">
+                            <button data-action-click="createNewFile()" class="p-1 rounded hover:bg-[#27272a] text-gray-500 hover:text-gray-300 transition-colors" title="New File">
                                 <i data-lucide="file-plus" class="w-3.5 h-3.5"></i>
                             </button>
-                            <button onclick="createNewFolder()" class="p-1 rounded hover:bg-[#27272a] text-gray-500 hover:text-gray-300 transition-colors" title="New Folder">
+                            <button data-action-click="createNewFolder()" class="p-1 rounded hover:bg-[#27272a] text-gray-500 hover:text-gray-300 transition-colors" title="New Folder">
                                 <i data-lucide="folder-plus" class="w-3.5 h-3.5"></i>
                             </button>
-                            <button onclick="uploadFile()" class="p-1 rounded hover:bg-[#27272a] text-gray-500 hover:text-gray-300 transition-colors" title="Upload File">
+                            <button data-action-click="uploadFile()" class="p-1 rounded hover:bg-[#27272a] text-gray-500 hover:text-gray-300 transition-colors" title="Upload File">
                                 <i data-lucide="upload" class="w-3.5 h-3.5"></i>
                             </button>
-                            <button onclick="collapseAllFolders()" class="p-1 rounded hover:bg-[#27272a] text-gray-500 hover:text-gray-300 transition-colors" title="Collapse All">
+                            <button data-action-click="collapseAllFolders()" class="p-1 rounded hover:bg-[#27272a] text-gray-500 hover:text-gray-300 transition-colors" title="Collapse All">
                                 <i data-lucide="fold-vertical" class="w-3.5 h-3.5"></i>
                             </button>
                         </div>
@@ -492,7 +496,7 @@
                     <!-- Search Panel Header -->
                     <div class="flex items-center justify-between px-3 py-2 border-b border-[#27272a]/50">
                         <span class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Search</span>
-                        <button onclick="toggleSearchPanel()" class="p-1 rounded hover:bg-[#27272a] text-gray-500 hover:text-gray-300 transition-colors" title="Close Search">
+                        <button data-action-click="toggleSearchPanel()" class="p-1 rounded hover:bg-[#27272a] text-gray-500 hover:text-gray-300 transition-colors" title="Close Search">
                             <i data-lucide="x" class="w-3.5 h-3.5"></i>
                         </button>
                     </div>
@@ -528,7 +532,7 @@
                     <div id="editor-container" class="flex-1 min-h-0"></div>
                     <!-- Bottom Panel - Project Settings -->
                     <div id="project-settings-panel" class="project-settings-panel">
-                        <div class="settings-panel-header" onclick="toggleProjectSettingsPanel()">
+                        <div class="settings-panel-header" data-action-click="toggleProjectSettingsPanel()">
                             <div class="flex items-center gap-3">
                                 <div class="settings-icon-wrapper">
                                     <i data-lucide="sliders-horizontal" class="w-4 h-4"></i>
@@ -543,7 +547,7 @@
                                     <!-- Quick status indicators will be injected here -->
                                 </div>
                                 <button id="settings-panel-toggle" class="panel-toggle-btn"
-                                    onclick="handleProjectSettingsToggleClick(event)"
+                                    data-action-click="handleProjectSettingsToggleClick(event)"
                                     title="Collapse Project Settings"
                                     aria-label="Toggle Project Settings"
                                     aria-controls="settings-panel-content"
@@ -571,7 +575,7 @@
                                             </div>
                                             <label class="toggle-switch">
                                                 <input type="checkbox" id="panel-license-check"
-                                                    onchange="toggleProjectRequireLicense()">
+                                                    data-action-change="toggleProjectRequireLicense()">
                                                 <span class="toggle-slider"></span>
                                             </label>
                                         </div>
@@ -586,7 +590,7 @@
                                             </div>
                                             <label class="toggle-switch">
                                                 <input type="checkbox" id="panel-hwid-check"
-                                                    onchange="toggleProjectHwidLock()">
+                                                    data-action-change="toggleProjectHwidLock()">
                                                 <span class="toggle-slider"></span>
                                             </label>
                                         </div>
@@ -600,7 +604,7 @@
                                             </div>
                                             <label class="toggle-switch">
                                                 <input type="checkbox" id="panel-ip-check"
-                                                    onchange="toggleProjectIpWhitelist()">
+                                                    data-action-change="toggleProjectIpWhitelist()">
                                                 <span class="toggle-slider"></span>
                                             </label>
                                         </div>
@@ -624,7 +628,7 @@
                                             </div>
                                             <label class="toggle-switch">
                                                 <input type="checkbox" id="panel-active-check"
-                                                    onchange="toggleCurrentProjectActive()">
+                                                    data-action-change="toggleCurrentProjectActive()">
                                                 <span class="toggle-slider"></span>
                                             </label>
                                         </div>
@@ -636,7 +640,7 @@
                                                     <span class="setting-desc">Workspace default</span>
                                                 </div>
                                             </div>
-                                            <button id="panel-set-default-btn" onclick="setAsDefaultProject()"
+                                            <button id="panel-set-default-btn" data-action-click="setAsDefaultProject()"
                                                 class="default-project-btn">
                                                 Set Default
                                             </button>
@@ -656,7 +660,7 @@
                                             <div class="limit-input-wrapper">
                                                 <input type="number" id="panel-max-exec" placeholder="&#8734;" min="0"
                                                     class="limit-input">
-                                                <button onclick="saveProjectMaxExec()" class="limit-save-btn"
+                                                <button data-action-click="saveProjectMaxExec()" class="limit-save-btn"
                                                     title="Save">
                                                     <i data-lucide="check" class="w-3.5 h-3.5"></i>
                                                 </button>
@@ -667,7 +671,7 @@
                                             <div class="limit-input-wrapper">
                                                 <input type="number" id="panel-rate-limit" placeholder="30" min="1"
                                                     max="100" class="limit-input">
-                                                <button onclick="saveProjectRateLimit()" class="limit-save-btn"
+                                                <button data-action-click="saveProjectRateLimit()" class="limit-save-btn"
                                                     title="Save">
                                                     <i data-lucide="check" class="w-3.5 h-3.5"></i>
                                                 </button>
@@ -687,19 +691,19 @@
                                         <span>Quick Actions</span>
                                     </div>
                                     <div class="quick-actions-grid">
-                                        <button onclick="duplicateCurrentProject()" class="quick-action-btn"
+                                        <button data-action-click="duplicateCurrentProject()" class="quick-action-btn"
                                             title="Duplicate">
                                             <i data-lucide="copy" class="w-4 h-4"></i>
                                         </button>
-                                        <button onclick="openRenameProjectModal()" class="quick-action-btn"
+                                        <button data-action-click="openRenameProjectModal()" class="quick-action-btn"
                                             title="Rename">
                                             <i data-lucide="edit-3" class="w-4 h-4"></i>
                                         </button>
-                                        <button onclick="resetProjectStats()" class="quick-action-btn"
+                                        <button data-action-click="resetProjectStats()" class="quick-action-btn"
                                             title="Reset Stats">
                                             <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                                         </button>
-                                        <button onclick="deleteCurrentProject()" class="quick-action-btn danger"
+                                        <button data-action-click="deleteCurrentProject()" class="quick-action-btn danger"
                                             title="Delete">
                                             <i data-lucide="trash-2" class="w-4 h-4"></i>
                                         </button>
@@ -712,13 +716,13 @@
 
                 <!-- Right Panel: Project Info Sidebar -->
                 <div id="project-info-sidebar" class="w-[264px] min-w-[264px] bg-[#18181b] border-l border-[#27272a] overflow-y-auto">
-                    <div class="project-info-header" onclick="toggleProjectInfoSidebar()">
+                    <div class="project-info-header" data-action-click="toggleProjectInfoSidebar()">
                         <div class="project-info-title">
                             <i data-lucide="info" class="w-4 h-4 text-indigo-400"></i>
                             <span class="text-sm font-semibold text-white project-info-title-text">Project Details</span>
                         </div>
                         <button id="project-info-toggle" class="panel-toggle-btn"
-                            onclick="event.stopPropagation(); toggleProjectInfoSidebar();"
+                            data-action-click="event.stopPropagation(); toggleProjectInfoSidebar();"
                             title="Collapse Project Details"
                             aria-label="Toggle Project Details"
                             aria-controls="project-info-content"
@@ -754,7 +758,7 @@
                                 <div class="flex items-center gap-2">
                                     <div id="sidebar-loader-url" class="info-value mono flex-1 truncate">-</div>
                                     <button
-                                        onclick="copyToClipboard(document.getElementById('sidebar-loader-url').textContent)"
+                                        data-action-click="copyToClipboard(document.getElementById('sidebar-loader-url').textContent)"
                                         class="copy-btn" title="Copy">
                                         <i data-lucide="copy" class="w-3.5 h-3.5"></i>
                                     </button>
@@ -765,7 +769,7 @@
                                 <div class="flex items-center gap-2">
                                     <div id="sidebar-workspace-url" class="info-value mono flex-1 truncate">-</div>
                                     <button
-                                        onclick="copyToClipboard(document.getElementById('sidebar-workspace-url').textContent)"
+                                        data-action-click="copyToClipboard(document.getElementById('sidebar-workspace-url').textContent)"
                                         class="copy-btn" title="Copy">
                                         <i data-lucide="copy" class="w-3.5 h-3.5"></i>
                                     </button>
@@ -776,7 +780,7 @@
                                 <div class="flex items-center gap-2">
                                     <div id="sidebar-secret-key" class="info-value mono flex-1 truncate">-</div>
                                     <button
-                                        onclick="copyToClipboard(document.getElementById('sidebar-secret-key').textContent)"
+                                        data-action-click="copyToClipboard(document.getElementById('sidebar-secret-key').textContent)"
                                         class="copy-btn" title="Copy">
                                         <i data-lucide="copy" class="w-3.5 h-3.5"></i>
                                     </button>
@@ -842,10 +846,10 @@
                     </div>
                 </div>
                 <div class="flex gap-3">
-                    <button onclick="exportLicenses()" class="quick-action">
+                    <button data-action-click="exportLicenses()" class="quick-action">
                         <i data-lucide="download" class="w-4 h-4"></i> Export
                     </button>
-                    <button onclick="openCreateLicenseModal()"
+                    <button data-action-click="openCreateLicenseModal()"
                         class="btn-primary text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
                         <i data-lucide="plus" class="w-4 h-4"></i> Create License
                     </button>
@@ -856,21 +860,21 @@
             <div class="flex flex-wrap gap-3 mb-6">
                 <div class="flex-1 min-w-[200px] relative">
                     <i data-lucide="search" class="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2"></i>
-                    <input type="text" id="licenseSearch" onkeyup="filterLicenses()"
+                    <input type="text" id="licenseSearch" data-action-keyup="filterLicenses()"
                         placeholder="Search by key, note, or HWID..."
                         class="w-full bg-[#18181b] border border-[#27272a] rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
                 </div>
-                <select id="licenseStatusFilter" onchange="filterLicenses()"
+                <select id="licenseStatusFilter" data-action-change="filterLicenses()"
                     class="bg-[#18181b] border border-[#27272a] rounded-lg px-4 py-2.5 text-sm text-gray-300">
                     <option value="all">All Status</option>
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
                 </select>
-                <select id="licenseProjectFilter" onchange="filterLicenses()"
+                <select id="licenseProjectFilter" data-action-change="filterLicenses()"
                     class="bg-[#18181b] border border-[#27272a] rounded-lg px-4 py-2.5 text-sm text-gray-300">
                     <option value="all">All Projects</option>
                 </select>
-                <button onclick="licenses = []; loadLicenses(true)" class="quick-action px-3" title="Refresh">
+                <button data-action-click="licenses = []; loadLicenses(true)" class="quick-action px-3" title="Refresh">
                     <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                 </button>
             </div>
@@ -881,13 +885,13 @@
                 <span class="text-sm text-indigo-400"><span id="licenseSelectedCount">0</span> licenses
                     selected</span>
                 <div class="flex gap-2">
-                    <button onclick="bulkToggleLicenses()"
+                    <button data-action-click="bulkToggleLicenses()"
                         class="text-xs px-3 py-1.5 rounded bg-[#27272a] text-gray-300 hover:bg-[#3f3f46]">Toggle
                         Status</button>
-                    <button onclick="bulkDeleteLicenses()"
+                    <button data-action-click="bulkDeleteLicenses()"
                         class="text-xs px-3 py-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20">Delete
                         Selected</button>
-                    <button onclick="clearLicenseSelection()"
+                    <button data-action-click="clearLicenseSelection()"
                         class="text-xs px-3 py-1.5 rounded text-gray-400 hover:text-white">Clear</button>
                 </div>
             </div>
@@ -897,7 +901,7 @@
                     <thead class="text-gray-400">
                         <tr>
                             <th class="px-4 py-4 w-10"><input type="checkbox" id="selectAllLicenses"
-                                    onchange="toggleAllLicenses()" class="rounded"></th>
+                                    data-action-change="toggleAllLicenses()" class="rounded"></th>
                             <th class="px-4 py-4 font-medium">Key</th>
                             <th class="px-4 py-4 font-medium">Project</th>
                             <th class="px-4 py-4 font-medium">Note</th>
@@ -917,10 +921,10 @@
             <div id="licensePagination" class="flex items-center justify-between mt-4 text-sm text-gray-400">
                 <span id="licensePageInfo">Showing 0 of 0</span>
                 <div class="flex gap-2">
-                    <button onclick="licensePrevPage()"
+                    <button data-action-click="licensePrevPage()"
                         class="px-3 py-1.5 rounded bg-[#27272a] hover:bg-[#3f3f46] disabled:opacity-50"
                         id="licensePrevBtn" disabled>&larr; Prev</button>
-                    <button onclick="licenseNextPage()"
+                    <button data-action-click="licenseNextPage()"
                         class="px-3 py-1.5 rounded bg-[#27272a] hover:bg-[#3f3f46] disabled:opacity-50"
                         id="licenseNextBtn" disabled>Next &rarr;</button>
                 </div>
@@ -940,10 +944,10 @@
                     </div>
                 </div>
                 <div class="flex gap-3">
-                    <button onclick="accessRules = []; loadAccessList(true)" class="quick-action px-3" title="Refresh">
+                    <button data-action-click="accessRules = []; loadAccessList(true)" class="quick-action px-3" title="Refresh">
                         <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                     </button>
-                    <button onclick="openAddAccessModal()"
+                    <button data-action-click="openAddAccessModal()"
                         class="btn-primary text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
                         <i data-lucide="plus" class="w-4 h-4"></i> Add Rule
                     </button>
@@ -954,11 +958,11 @@
             <div class="flex flex-wrap gap-3 mb-6">
                 <div class="flex-1 min-w-[200px] relative">
                     <i data-lucide="search" class="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2"></i>
-                    <input type="text" id="accessSearch" onkeyup="filterAccess()"
+                    <input type="text" id="accessSearch" data-action-keyup="filterAccess()"
                         placeholder="Search by identifier or note..."
                         class="w-full bg-[#18181b] border border-[#27272a] rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
                 </div>
-                <select id="accessTypeFilter" onchange="filterAccess()"
+                <select id="accessTypeFilter" data-action-change="filterAccess()"
                     class="bg-[#18181b] border border-[#27272a] rounded-lg px-4 py-2.5 text-sm text-gray-300">
                     <option value="all">All Types</option>
                     <option value="whitelist">Whitelist</option>
@@ -997,13 +1001,13 @@
                     </div>
                 </div>
                 <div class="flex gap-3">
-                    <button onclick="exportLogs()" class="quick-action">
+                    <button data-action-click="exportLogs()" class="quick-action">
                         <i data-lucide="download" class="w-4 h-4"></i> Export
                     </button>
-                    <button onclick="clearAllLogs()" class="quick-action text-red-400 hover:text-red-300">
+                    <button data-action-click="clearAllLogs()" class="quick-action text-red-400 hover:text-red-300">
                         <i data-lucide="trash-2" class="w-4 h-4"></i> Clear All
                     </button>
-                    <button onclick="logs = []; loadLogs()" class="quick-action">
+                    <button data-action-click="logs = []; loadLogs()" class="quick-action">
                         <i data-lucide="refresh-cw" class="w-4 h-4"></i> Refresh
                     </button>
                 </div>
@@ -1013,10 +1017,10 @@
             <div class="flex flex-wrap gap-3 mb-6">
                 <div class="flex-1 min-w-[200px] relative">
                     <i data-lucide="search" class="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2"></i>
-                    <input type="text" id="logsSearch" onkeyup="filterLogs()" placeholder="Search logs..."
+                    <input type="text" id="logsSearch" data-action-keyup="filterLogs()" placeholder="Search logs..."
                         class="w-full bg-[#18181b] border border-[#27272a] rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
                 </div>
-                <select id="logsActionFilter" onchange="filterLogs()"
+                <select id="logsActionFilter" data-action-change="filterLogs()"
                     class="bg-[#18181b] border border-[#27272a] rounded-lg px-4 py-2.5 text-sm text-gray-300">
                     <option value="all">All Actions</option>
                     <option value="LOAD_SCRIPT">Load Project</option>
@@ -1028,7 +1032,7 @@
                     <option value="INVALID_LICENSE">Invalid License</option>
                     <option value="BLOCK">Blocked</option>
                 </select>
-                <select id="logsDateFilter" onchange="filterLogs()"
+                <select id="logsDateFilter" data-action-change="filterLogs()"
                     class="bg-[#18181b] border border-[#27272a] rounded-lg px-4 py-2.5 text-sm text-gray-300">
                     <option value="all">All Time</option>
                     <option value="today">Today</option>
@@ -1057,10 +1061,10 @@
             <div id="logsPagination" class="flex items-center justify-between mt-4 text-sm text-gray-400">
                 <span id="logsPageInfo">Showing 0 of 0</span>
                 <div class="flex gap-2">
-                    <button onclick="logsPrevPage()"
+                    <button data-action-click="logsPrevPage()"
                         class="px-3 py-1.5 rounded bg-[#27272a] hover:bg-[#3f3f46] disabled:opacity-50" id="logsPrevBtn"
                         disabled>&larr; Prev</button>
-                    <button onclick="logsNextPage()"
+                    <button data-action-click="logsNextPage()"
                         class="px-3 py-1.5 rounded bg-[#27272a] hover:bg-[#3f3f46] disabled:opacity-50" id="logsNextBtn"
                         disabled>Next &rarr;</button>
                 </div>
@@ -1078,10 +1082,10 @@
                     <p class="text-gray-500 text-sm">Manage workspace collaborators and permissions</p>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button onclick="refreshTeam()" class="quick-action px-3 py-2 rounded-lg text-sm" title="Refresh team">
+                    <button data-action-click="refreshTeam()" class="quick-action px-3 py-2 rounded-lg text-sm" title="Refresh team">
                         <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                     </button>
-                    <button onclick="openInviteModal()" id="inviteBtn"
+                    <button data-action-click="openInviteModal()" id="inviteBtn"
                         class="btn-primary px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
                         <i data-lucide="user-plus" class="w-4 h-4"></i>
                         Invite Member
@@ -1176,7 +1180,7 @@
                             <div class="flex gap-2">
                                 <input type="text" id="wsLoaderKey" readonly
                                     class="flex-1 bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-3 text-sm text-gray-300 font-mono focus:outline-none focus:border-indigo-500">
-                                <button onclick="copyToClipboard(document.getElementById('wsLoaderKey').value)"
+                                <button data-action-click="copyToClipboard(document.getElementById('wsLoaderKey').value)"
                                     class="quick-action px-4">
                                     <i data-lucide="copy" class="w-4 h-4"></i>
                                 </button>
@@ -1187,7 +1191,7 @@
 
                         <div>
                             <label class="block text-sm font-medium text-gray-400 mb-2">Default Project</label>
-                            <select id="defaultProjectSelect" onchange="saveSettings()"
+                            <select id="defaultProjectSelect" data-action-change="saveSettings()"
                                 class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-3 text-sm text-gray-300 focus:outline-none focus:border-indigo-500">
                                 <option value="">-- None --</option>
                             </select>
@@ -1201,7 +1205,7 @@
                                 <input type="text" id="discordWebhook"
                                     placeholder="https://discord.com/api/webhooks/..."
                                     class="flex-1 bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-3 text-sm text-gray-300 focus:outline-none focus:border-indigo-500">
-                                <button onclick="saveSettings()" class="btn-primary px-4 py-3 rounded-lg">
+                                <button data-action-click="saveSettings()" class="btn-primary px-4 py-3 rounded-lg">
                                     <i data-lucide="save" class="w-4 h-4"></i>
                                 </button>
                             </div>
@@ -1225,7 +1229,7 @@
                                 <p class="text-xs text-gray-500 mt-1">Require a 6-digit PIN to access this workspace</p>
                             </div>
                             <label class="toggle-switch">
-                                <input type="checkbox" id="pinEnabledToggle" onchange="togglePinProtection()">
+                                <input type="checkbox" id="pinEnabledToggle" data-action-change="togglePinProtection()">
                                 <span class="toggle-slider"></span>
                             </label>
                         </div>
@@ -1248,13 +1252,13 @@
                                 <input type="password" maxlength="1" data-pin-index="5" class="pin-input"
                                     inputmode="numeric" pattern="[0-9]">
                             </div>
-                            <button onclick="savePin()"
+                            <button data-action-click="savePin()"
                                 class="btn-primary text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
                                 <i data-lucide="save" class="w-4 h-4"></i>
                                 Save PIN
                             </button>
                         </div>
-                        <button onclick="removePin()"
+                        <button data-action-click="removePin()"
                             class="btn-danger px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
                             <i data-lucide="x" class="w-4 h-4"></i>
                             Remove PIN
@@ -1270,7 +1274,7 @@
                     </h3>
                     <p class="text-sm text-gray-400 mb-4">Once you delete a workspace, there is no going back. Please be
                         certain.</p>
-                    <button onclick="deleteWorkspace()"
+                    <button data-action-click="deleteWorkspace()"
                         class="btn-danger px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
                         <i data-lucide="trash-2" class="w-4 h-4"></i> Delete Workspace
                     </button>
@@ -1315,15 +1319,15 @@
                 <div class="flex gap-2">
                     <input type="text" id="inviteLinkInput" readonly
                         class="flex-1 bg-[#09090b] border border-[#27272a] rounded px-3 py-2 text-xs text-gray-300 font-mono">
-                    <button onclick="copyInviteLink()"
+                    <button data-action-click="copyInviteLink()"
                         class="px-3 py-2 bg-emerald-500/20 text-emerald-400 rounded text-xs hover:bg-emerald-500/30 transition-colors">Copy</button>
                 </div>
             </div>
 
             <div class="flex justify-end gap-2">
-                <button onclick="closeInviteModal()"
+                <button data-action-click="closeInviteModal()"
                     class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
-                <button onclick="sendInvite()" id="sendInviteBtn"
+                <button data-action-click="sendInvite()" id="sendInviteBtn"
                     class="btn-primary text-white px-5 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
                     <i data-lucide="send" class="w-4 h-4"></i>
                     Send Invite
@@ -1343,9 +1347,9 @@
             <input type="text" id="newProjectName" placeholder="my-project"
                 class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-3 text-sm text-white mb-4 focus:outline-none focus:border-indigo-500">
             <div class="flex justify-end gap-2">
-                <button onclick="document.getElementById('createProjectModal').style.display='none'"
+                <button data-action-click="document.getElementById('createProjectModal').style.display='none'"
                     class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
-                <button onclick="createProject()"
+                <button data-action-click="createProject()"
                     class="btn-primary text-white px-5 py-2 rounded-lg text-sm font-medium">Create</button>
             </div>
         </div>
@@ -1369,12 +1373,12 @@
             <!-- License Key Mode Toggle -->
             <div class="flex items-center gap-3 mb-4 p-3 bg-[#09090b] rounded-lg border border-[#27272a]">
                 <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="licKeyMode" value="auto" checked onchange="toggleLicenseKeyMode()"
+                    <input type="radio" name="licKeyMode" value="auto" checked data-action-change="toggleLicenseKeyMode()"
                         class="w-4 h-4 text-indigo-500">
                     <span class="text-sm text-gray-300">Auto Generate</span>
                 </label>
                 <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="licKeyMode" value="custom" onchange="toggleLicenseKeyMode()"
+                    <input type="radio" name="licKeyMode" value="custom" data-action-change="toggleLicenseKeyMode()"
                         class="w-4 h-4 text-indigo-500">
                     <span class="text-sm text-gray-300">Custom Key</span>
                 </label>
@@ -1418,9 +1422,9 @@
                 class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-3 text-sm text-white mb-6 focus:outline-none focus:border-indigo-500">
 
             <div class="flex justify-end gap-2">
-                <button onclick="document.getElementById('createLicenseModal').style.display='none'"
+                <button data-action-click="document.getElementById('createLicenseModal').style.display='none'"
                     class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
-                <button onclick="createLicense()"
+                <button data-action-click="createLicense()"
                     class="btn-primary text-white px-5 py-2 rounded-lg text-sm font-medium">Generate</button>
             </div>
         </div>
@@ -1450,9 +1454,9 @@
                 class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-3 text-sm text-white mb-6 focus:outline-none focus:border-indigo-500">
 
             <div class="flex justify-end gap-2">
-                <button onclick="document.getElementById('addAccessModal').style.display='none'"
+                <button data-action-click="document.getElementById('addAccessModal').style.display='none'"
                     class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
-                <button onclick="addAccessRule()"
+                <button data-action-click="addAccessRule()"
                     class="btn-primary text-white px-5 py-2 rounded-lg text-sm font-medium">Add Rule</button>
             </div>
         </div>
@@ -1475,9 +1479,9 @@
             </div>
 
             <div class="flex justify-end gap-2 mt-4">
-                <button onclick="document.getElementById('loaderModal').style.display='none'"
+                <button data-action-click="document.getElementById('loaderModal').style.display='none'"
                     class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Close</button>
-                <button onclick="copyLoaderCode()"
+                <button data-action-click="copyLoaderCode()"
                     class="btn-primary text-white px-5 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
                     <i data-lucide="copy" class="w-4 h-4"></i> Copy Code
                 </button>
@@ -1499,7 +1503,7 @@
                     <div class="flex gap-2 items-center mt-1">
                         <code id="infoLicKey"
                             class="text-sm text-indigo-400 font-mono bg-[#27272a] px-3 py-2 rounded-lg flex-1"></code>
-                        <button onclick="copyToClipboard(document.getElementById('infoLicKey').textContent)"
+                        <button data-action-click="copyToClipboard(document.getElementById('infoLicKey').textContent)"
                             class="action-btn p-2"><i data-lucide="copy" class="w-4 h-4"></i></button>
                     </div>
                 </div>
@@ -1518,7 +1522,7 @@
                     <div class="flex gap-2 items-center mt-1">
                         <code id="infoLicHwid"
                             class="text-xs text-gray-300 font-mono bg-[#27272a] px-3 py-2 rounded-lg flex-1 break-all"></code>
-                        <button onclick="resetHwid()"
+                        <button data-action-click="resetHwid()"
                             class="text-red-400 hover:text-red-300 text-xs border border-red-900/50 bg-red-900/10 px-3 py-2 rounded-lg transition-colors">Reset</button>
                     </div>
                 </div>
@@ -1536,13 +1540,13 @@
                     <label class="text-xs text-gray-500 uppercase tracking-wide">HWID Lock</label>
                     <div class="flex items-center gap-3 mt-2">
                         <div id="infoLicLockStatus" class="text-sm text-white"></div>
-                        <button id="btnToggleLock" onclick="toggleHwidLock()"
+                        <button id="btnToggleLock" data-action-click="toggleHwidLock()"
                             class="text-xs px-3 py-1.5 rounded-lg border transition-colors"></button>
                     </div>
                 </div>
             </div>
             <div class="flex justify-end">
-                <button onclick="document.getElementById('licenseInfoModal').style.display='none'"
+                <button data-action-click="document.getElementById('licenseInfoModal').style.display='none'"
                     class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Close</button>
             </div>
         </div>
@@ -1555,7 +1559,7 @@
             <pre class="text-sm text-gray-400 mb-6 whitespace-pre-wrap font-sans"
                 id="alertMessage">Message goes here</pre>
             <div class="flex justify-end">
-                <button onclick="closeAlert()"
+                <button data-action-click="closeAlert()"
                     class="btn-primary text-white px-5 py-2 rounded-lg text-sm font-medium">OK</button>
             </div>
         </div>
@@ -1576,9 +1580,9 @@
                 class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-3 text-sm text-white mb-4 focus:outline-none focus:border-indigo-500">
             <input type="hidden" id="renameProjectKey">
             <div class="flex justify-end gap-2">
-                <button onclick="document.getElementById('renameProjectModal').style.display='none'"
+                <button data-action-click="document.getElementById('renameProjectModal').style.display='none'"
                     class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
-                <button onclick="renameProject()"
+                <button data-action-click="renameProject()"
                     class="btn-primary text-white px-5 py-2 rounded-lg text-sm font-medium">Rename</button>
             </div>
         </div>
@@ -1646,7 +1650,7 @@
                 </div>
             </div>
             <div class="flex justify-end mt-6">
-                <button onclick="document.getElementById('shortcutsModal').style.display='none'"
+                <button data-action-click="document.getElementById('shortcutsModal').style.display='none'"
                     class="btn-primary text-white px-5 py-2 rounded-lg text-sm font-medium">Close</button>
             </div>
         </div>
@@ -1658,9 +1662,9 @@
             <h3 class="text-lg font-bold text-white mb-3" id="confirmTitle">Confirm</h3>
             <p class="text-sm text-gray-400 mb-6" id="confirmMessage">Are you sure?</p>
             <div class="flex justify-end gap-2">
-                <button onclick="closeConfirm(false)"
+                <button data-action-click="closeConfirm(false)"
                     class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
-                <button onclick="closeConfirm(true)"
+                <button data-action-click="closeConfirm(true)"
                     class="btn-primary text-white px-5 py-2 rounded-lg text-sm font-medium">Confirm</button>
             </div>
         </div>
@@ -1674,9 +1678,9 @@
             <input type="text" id="promptInput"
                 class="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-4 py-3 text-sm text-white mb-6 focus:outline-none focus:border-indigo-500">
             <div class="flex justify-end gap-2">
-                <button onclick="closePrompt(null)"
+                <button data-action-click="closePrompt(null)"
                     class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
-                <button onclick="closePrompt(document.getElementById('promptInput').value)"
+                <button data-action-click="closePrompt(document.getElementById('promptInput').value)"
                     class="btn-primary text-white px-5 py-2 rounded-lg text-sm font-medium">OK</button>
             </div>
         </div>
@@ -1713,7 +1717,7 @@
 
             <p id="pinVerifyError" class="text-sm text-red-400 mb-4 hidden">Invalid PIN. Please try again.</p>
 
-            <button onclick="submitPinVerification()"
+            <button data-action-click="submitPinVerification()"
                 class="btn-primary text-white px-6 py-3 rounded-lg text-sm font-medium w-full mb-3">
                 <i data-lucide="unlock" class="w-4 h-4 inline mr-2"></i>
                 Verify PIN
@@ -1725,3 +1729,5 @@
 </body>
 
 </html>
+
+

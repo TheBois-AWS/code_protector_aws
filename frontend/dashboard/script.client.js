@@ -1,6 +1,36 @@
 // Initialize Lucide icons
 lucide.createIcons();
 
+const dashboardShared = {
+  apiClient: null,
+  auth: null,
+  realtime: null,
+  network: null,
+  config: null,
+  events: null
+};
+
+const dashboardSharedReady = (async () => {
+  const [apiClient, auth, realtime, network, config, events] = await Promise.all([
+    import('/shared/api-client.js'),
+    import('/shared/auth.js'),
+    import('/shared/realtime.js'),
+    import('/shared/network.js'),
+    import('/shared/config.js'),
+    import('/shared/events.js')
+  ]);
+  dashboardShared.apiClient = apiClient;
+  dashboardShared.auth = auth;
+  dashboardShared.realtime = realtime;
+  dashboardShared.network = network;
+  dashboardShared.config = config;
+  dashboardShared.events = events;
+  return dashboardShared;
+})().catch((error) => {
+  console.error('Dashboard shared bootstrap failed', error);
+  return dashboardShared;
+});
+
 // XSS prevention utility
 function escapeHtml(text) {
   if (!text) return '';
@@ -53,7 +83,7 @@ function toggleSidebar() {
 })();
 
 // Auth Check
-const token = localStorage.getItem('token');
+let token = localStorage.getItem('token');
 const AUTH_RETURN_TO_KEY = 'auth_return_to';
 
 function sanitizeReturnToPath(path) {
@@ -76,9 +106,6 @@ function redirectToLoginWithReturnTo(returnToPath = getCurrentReturnToPath()) {
   window.location.replace(`/login?returnTo=${encodeURIComponent(safeReturnTo)}`);
 }
 
-if (!token) {
-  redirectToLoginWithReturnTo();
-}
 setAdminNavVisibility(false);
 
 // Global State
@@ -93,6 +120,41 @@ let dashboardWsShouldReconnect = true;
 let dashboardWsReconnectDelayMs = 2000;
 let dashboardRealtimeRefreshTimer = null;
 let dashboardFetchWrapped = false;
+let dashboardRealtimeChannel = null;
+let detachDashboardActionBindings = null;
+
+function getDashboardToken() {
+  return (dashboardShared.auth?.getAuthToken?.() || localStorage.getItem('token') || token || '');
+}
+
+function ensureDashboardRealtimeChannel() {
+  if (dashboardRealtimeChannel) return dashboardRealtimeChannel;
+  const createRealtimeChannel = dashboardShared.realtime?.createRealtimeChannel;
+  if (typeof createRealtimeChannel !== 'function') return null;
+
+  dashboardRealtimeChannel = createRealtimeChannel({
+    name: 'dashboard',
+    getUrl: async (userId) => {
+      const endpoint = await getDashboardWsEndpoint();
+      return buildDashboardWsUrl(endpoint, userId);
+    },
+    onMessage: (message) => {
+      handleDashboardWsMessage(message);
+    },
+    onOpen: (socket) => {
+      dashboardWsReconnectDelayMs = 2000;
+      dashboardWs = socket;
+    },
+    onClose: () => {
+      dashboardWs = null;
+    },
+    onError: (error) => {
+      console.error('Dashboard WebSocket error', error);
+    }
+  });
+
+  return dashboardRealtimeChannel;
+}
 
 function setAdminNavVisibility(canAccess) {
   const adminNavItem = document.getElementById('adminNavItem');
@@ -113,6 +175,18 @@ function setAdminNavVisibility(canAccess) {
 }
 
 function scheduleDashboardRealtimeRefresh(delay = 300) {
+  const channel = ensureDashboardRealtimeChannel();
+  if (channel) {
+    channel.queue('dashboard-refresh', async () => {
+      try {
+        await refreshDashboardData();
+      } catch (error) {
+        console.error('Dashboard realtime refresh failed', error);
+      }
+    }, delay);
+    return;
+  }
+
   if (dashboardRealtimeRefreshTimer) clearTimeout(dashboardRealtimeRefreshTimer);
   dashboardRealtimeRefreshTimer = setTimeout(() => {
     dashboardRealtimeRefreshTimer = null;
@@ -127,7 +201,7 @@ async function getDashboardWsEndpoint() {
   dashboardWsEndpoint = '';
   try {
     const res = await fetch('/api/ws/config', {
-      headers: { 'Authorization': token }
+      headers: { 'Authorization': getDashboardToken() }
     });
     const data = await res.json();
     if (data?.success && data.endpoint) {
@@ -144,17 +218,29 @@ function buildDashboardWsUrl(endpoint, userId) {
   if (!endpoint || !userId) return '';
   let normalized = String(endpoint).trim();
   if (!normalized) return '';
-  if (normalized.startsWith('https://')) normalized = `wss://${normalized.slice(8)}`;
-  if (normalized.startsWith('http://')) normalized = `ws://${normalized.slice(7)}`;
-  if (!/^wss?:\/\//i.test(normalized)) return '';
+  if (typeof dashboardShared.realtime?.normalizeWsEndpoint === 'function') {
+    normalized = dashboardShared.realtime.normalizeWsEndpoint(normalized);
+  } else {
+    if (normalized.startsWith('https://')) normalized = `wss://${normalized.slice(8)}`;
+    if (normalized.startsWith('http://')) normalized = `ws://${normalized.slice(7)}`;
+    if (!/^wss?:\/\//i.test(normalized)) return '';
+  }
+  if (!normalized) return '';
 
   const url = new URL(normalized);
   url.searchParams.set('path', `/api/ws/user/${userId}`);
-  url.searchParams.set('token', token);
+  url.searchParams.set('token', getDashboardToken());
   return url.toString();
 }
 
 function disconnectDashboardWebSocket({ allowReconnect = false } = {}) {
+  const channel = ensureDashboardRealtimeChannel();
+  if (channel) {
+    channel.disconnect({ allowReconnect });
+    dashboardWs = channel.socket;
+    return;
+  }
+
   dashboardWsShouldReconnect = allowReconnect;
   if (dashboardWsReconnectTimer) {
     clearTimeout(dashboardWsReconnectTimer);
@@ -172,6 +258,12 @@ function disconnectDashboardWebSocket({ allowReconnect = false } = {}) {
 }
 
 function scheduleDashboardWsReconnect() {
+  const channel = ensureDashboardRealtimeChannel();
+  if (channel) {
+    channel.scheduleReconnect();
+    return;
+  }
+
   if (!dashboardWsShouldReconnect || dashboardWsReconnectTimer || !dashboardWsUserId) return;
   const delay = dashboardWsReconnectDelayMs;
   dashboardWsReconnectTimer = setTimeout(() => {
@@ -204,6 +296,14 @@ function handleDashboardWsMessage(raw) {
 async function connectDashboardWebSocket(userId) {
   if (!userId) return;
   dashboardWsUserId = String(userId);
+
+  const channel = ensureDashboardRealtimeChannel();
+  if (channel) {
+    const socket = await channel.connect(dashboardWsUserId);
+    dashboardWs = socket;
+    return;
+  }
+
   if (dashboardWs && (dashboardWs.readyState === WebSocket.OPEN || dashboardWs.readyState === WebSocket.CONNECTING)) {
     return;
   }
@@ -277,16 +377,18 @@ function showToast(message, type = 'info') {
     info: 'info'
   };
 
-  toast.className = `flex items-center gap-3 px-4 py-3 rounded-lg border ${colors[type]} backdrop-blur-sm shadow-lg transform translate-x-full transition-transform duration-300`;
+  toast.className = `dashboard-toast flex items-center gap-3 px-4 py-3 rounded-lg border ${colors[type]} backdrop-blur-sm shadow-lg transform translate-x-full transition-transform duration-300`;
   toast.innerHTML = `
     <i data-lucide="${icons[type]}" class="w-5 h-5"></i>
     <span class="text-sm font-medium">${escapeHtml(message)}</span>
-    <button onclick="this.parentElement.remove()" class="ml-2 hover:opacity-70">
+    <button type="button" data-toast-close class="ml-2 hover:opacity-70">
       <i data-lucide="x" class="w-4 h-4"></i>
     </button>
   `;
   
   container.appendChild(toast);
+  const closeBtn = toast.querySelector('[data-toast-close]');
+  closeBtn?.addEventListener('click', () => toast.remove());
   lucide.createIcons();
   
   // Animate in
@@ -300,8 +402,28 @@ function showToast(message, type = 'info') {
 }
 
 function getNavElForPanel(panelId) {
-  return document.querySelector(`.nav-item[onclick*="'${panelId}'"]`) ||
-         document.querySelector(`.nav-item[onclick*='"${panelId}"']`);
+  const navItems = document.querySelectorAll('.nav-item');
+  for (const navItem of navItems) {
+    const expression = navItem.getAttribute('data-action-click') || '';
+    if (expression.includes(`showPanel('${panelId}'`) || expression.includes(`showPanel("${panelId}"`)) {
+      return navItem;
+    }
+  }
+  return null;
+}
+
+function installDashboardActionBindings() {
+  if (detachDashboardActionBindings) return;
+  const installActionAttributes = dashboardShared.events?.installActionAttributes;
+  if (typeof installActionAttributes !== 'function') return;
+
+  detachDashboardActionBindings = installActionAttributes({
+    root: document,
+    scope: window,
+    onError: (error, statement) => {
+      console.warn('Dashboard action ignored:', statement, error?.message || error);
+    }
+  });
 }
 
 function setDashboardNetworkBanner(visible, message) {
@@ -355,21 +477,31 @@ function toggleMobileSidebar() {
 function installDashboardFetchGuard() {
   if (dashboardFetchWrapped) return;
   dashboardFetchWrapped = true;
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = async (...args) => {
-    try {
-      const response = await nativeFetch(...args);
-      if (response.status >= 500) {
+
+  dashboardSharedReady.then(({ apiClient, auth }) => {
+    if (!apiClient?.installApiClient) return;
+    apiClient.installApiClient({
+      onUnauthorized: ({ path }) => {
+        if (path && (path.startsWith('/api/login') || path.startsWith('/api/register'))) return;
+        disconnectDashboardWebSocket({ allowReconnect: false });
+        token = '';
+        auth?.clearAuthSession?.();
+        redirectToLoginWithReturnTo();
+      },
+      onForbidden: ({ path }) => {
+        if (!path || !path.startsWith('/api/')) return;
+        setDashboardNetworkBanner(true, 'Access denied. Please sign in again.');
+      },
+      onNetworkError: () => {
+        setDashboardNetworkBanner(true, 'Network error. Check your connection and retry.');
+      },
+      onServerError: () => {
         setDashboardNetworkBanner(true, 'Server is busy right now. Retrying may help.');
-      } else {
-        setDashboardNetworkBanner(false);
       }
-      return response;
-    } catch (error) {
-      setDashboardNetworkBanner(true, 'Network error. Check your connection and retry.');
-      throw error;
-    }
-  };
+    });
+  }).catch((error) => {
+    console.error('Failed to install shared API client for dashboard', error);
+  });
 }
 
 installDashboardFetchGuard();
@@ -406,7 +538,8 @@ function showPanel(panelId, navEl) {
 
 function logout() {
   disconnectDashboardWebSocket({ allowReconnect: false });
-  localStorage.removeItem('token');
+  token = '';
+  dashboardShared.auth?.clearAuthSession?.();
   localStorage.removeItem(AUTH_RETURN_TO_KEY);
   window.location.replace('/login');
 }
@@ -414,14 +547,17 @@ function logout() {
 // User Profile Functions
 async function loadUserProfile() {
   try {
+    const authHeaderToken = getDashboardToken();
+    const headers = authHeaderToken ? { 'Authorization': authHeaderToken } : {};
     const res = await fetch('/api/user/profile', {
-      headers: { 'Authorization': token }
+      headers
     });
     
     // Handle expired/invalid token
     if (res.status === 401 || res.status === 403) {
       disconnectDashboardWebSocket({ allowReconnect: false });
-      localStorage.removeItem('token');
+      token = '';
+      dashboardShared.auth?.clearAuthSession?.();
       redirectToLoginWithReturnTo();
       return;
     }
@@ -460,7 +596,7 @@ async function saveProfile() {
       method: 'PUT',
       headers: { 
         'Content-Type': 'application/json',
-        'Authorization': token 
+        'Authorization': getDashboardToken()
       },
       body: JSON.stringify({ display_name: displayName })
     });
@@ -502,7 +638,7 @@ async function changePassword() {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'Authorization': token 
+        'Authorization': getDashboardToken()
       },
       body: JSON.stringify({ 
         currentPassword,
@@ -556,7 +692,7 @@ async function deleteAccount() {
       method: 'DELETE',
       headers: { 
         'Content-Type': 'application/json',
-        'Authorization': token 
+        'Authorization': getDashboardToken()
       },
       body: JSON.stringify({ password })
     });
@@ -564,7 +700,8 @@ async function deleteAccount() {
     
     if (data.success) {
       showToast('Account deleted. Redirecting...', 'success');
-      localStorage.removeItem('token');
+      token = '';
+      dashboardShared.auth?.clearAuthSession?.();
       localStorage.removeItem(AUTH_RETURN_TO_KEY);
       setTimeout(() => window.location.replace('/login'), 2000);
     } else {
@@ -579,7 +716,7 @@ async function deleteAccount() {
 async function loadUserStats() {
   try {
     const res = await fetch('/api/user/stats', {
-      headers: { 'Authorization': token }
+      headers: { 'Authorization': getDashboardToken() }
     });
     const data = await res.json();
     
@@ -624,7 +761,7 @@ async function loadRecentWorkspaces() {
   
   try {
     const res = await fetch('/api/workspaces', {
-      headers: { 'Authorization': token }
+      headers: { 'Authorization': getDashboardToken() }
     });
     const data = await res.json();
     
@@ -642,7 +779,7 @@ async function loadRecentWorkspaces() {
           </div>
           <h3 class="text-lg font-semibold text-white mb-2">No workspaces yet</h3>
           <p class="text-gray-500 text-sm mb-6">Create your first workspace to start protecting projects</p>
-          <button class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2" onclick="openCreateWorkspaceModal()">
+          <button type="button" data-action="create-workspace" class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2">
             <i data-lucide="plus" class="w-4 h-4"></i> Create Workspace
           </button>
         </div>
@@ -667,7 +804,7 @@ async function loadWorkspaces() {
   
   try {
     const res = await fetch('/api/workspaces', {
-      headers: { 'Authorization': token }
+      headers: { 'Authorization': getDashboardToken() }
     });
     const data = await res.json();
     
@@ -693,7 +830,7 @@ function renderWorkspaces(workspaces) {
         </div>
         <h3 class="text-lg font-semibold text-white mb-2">No workspaces found</h3>
         <p class="text-gray-500 text-sm mb-6">Create your first workspace to start protecting projects</p>
-        <button class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2" onclick="openCreateWorkspaceModal()">
+        <button type="button" data-action="create-workspace" class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-2">
           <i data-lucide="plus" class="w-4 h-4"></i> Create Workspace
         </button>
       </div>
@@ -726,9 +863,10 @@ function renderWorkspaceCard(ws) {
   const langKey = ws.language || 'python';
   const logo = langLogos[langKey] || langLogos['python'];
   const langName = langNames[langKey] || langKey;
+  const workspaceUrl = `/workspace/${encodeURIComponent(ws.loader_key || '')}`;
   
   return `
-    <div class="workspace-card p-6 cursor-pointer group" onclick="window.location.href='/workspace/${ws.loader_key}'">
+    <div class="workspace-card p-6 cursor-pointer group" data-workspace-url="${workspaceUrl}">
       <div class="flex justify-between items-start mb-4">
         <div class="card-icon w-12 h-12 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 flex items-center justify-center border border-zinc-700/50 shadow-lg">
           ${logo}
@@ -817,7 +955,7 @@ async function createWorkspace() {
   try {
     const res = await fetch('/api/workspaces', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': token },
+      headers: { 'Content-Type': 'application/json', 'Authorization': getDashboardToken() },
       body: JSON.stringify({ name, language: finalLanguage })
     });
     const data = await res.json();
@@ -847,13 +985,17 @@ document.addEventListener('keydown', (e) => {
   // Ctrl+K for quick search
   if (e.ctrlKey && e.key === 'k') {
     e.preventDefault();
-    showPanel('workspaces', document.querySelector('[onclick*="workspaces"]'));
+    showPanel('workspaces', getNavElForPanel('workspaces'));
     setTimeout(() => document.getElementById('workspaceSearch')?.focus(), 100);
   }
 });
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+  dashboardSharedReady.then(() => {
+    installDashboardActionBindings();
+  }).catch(() => {});
+  installDashboardActionBindings();
   installDashboardFetchGuard();
 
   const retryButton = document.getElementById('networkRetryButton');
@@ -886,6 +1028,21 @@ document.addEventListener('DOMContentLoaded', () => {
     modal.addEventListener('click', (e) => {
       if (e.target === modal) modal.style.display = 'none';
     });
+  });
+
+  document.addEventListener('click', (event) => {
+    const createBtn = event.target.closest('[data-action="create-workspace"]');
+    if (createBtn) {
+      openCreateWorkspaceModal();
+      return;
+    }
+
+    const workspaceCard = event.target.closest('[data-workspace-url]');
+    if (workspaceCard) {
+      const target = workspaceCard.getAttribute('data-workspace-url');
+      if (target) window.location.href = target;
+      return;
+    }
   });
 });
 

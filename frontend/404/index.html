@@ -4,19 +4,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>404 - Page Not Found</title>
+    <title>404 | GuardScript</title>
     <link rel="icon" type="image/png" href="/assets/anhnen2.png">
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            } catch {}
+        })();
+    </script>
+    <link rel="stylesheet" href="/shared/styles/tokens.css">
+    <link rel="stylesheet" href="/shared/styles/base.css">
+    <link rel="stylesheet" href="/shared/styles/components.css">
+    <link rel="stylesheet" href="/shared/styles/utilities.css">
     <style>
         :root {
             --bg-0: #030712;
             --bg-1: #0f172a;
             --accent-a: #38bdf8;
-            --accent-b: #a855f7;
+            --accent-b: #2e84d1;
             --accent-c: #22d3ee;
             --text-main: #e2e8f0;
             --text-sub: #94a3b8;
             --panel: rgba(2, 6, 23, 0.55);
             --border: rgba(148, 163, 184, 0.22);
+        }
+
+        [data-theme="light"] {
+            --bg-0: #e8f1fb;
+            --bg-1: #dce9f7;
+            --accent-a: #2f8fd1;
+            --accent-b: #3278c4;
+            --accent-c: #1b90a0;
+            --text-main: #11253a;
+            --text-sub: #4a6480;
+            --panel: rgba(255, 255, 255, 0.72);
+            --border: rgba(56, 91, 127, 0.24);
         }
 
         * {
@@ -26,7 +51,7 @@
         body {
             margin: 0;
             min-height: 100vh;
-            font-family: "Space Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+            font-family: var(--font-sans);
             color: var(--text-main);
             overflow: hidden;
             background:

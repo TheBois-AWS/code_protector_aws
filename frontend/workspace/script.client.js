@@ -1,6 +1,33 @@
 // Initialize Lucide icons
 lucide.createIcons();
 
+const workspaceShared = {
+    apiClient: null,
+    auth: null,
+    realtime: null,
+    network: null,
+    events: null
+};
+
+const workspaceSharedReady = (async () => {
+    const [apiClient, auth, realtime, network, events] = await Promise.all([
+        import('/shared/api-client.js'),
+        import('/shared/auth.js'),
+        import('/shared/realtime.js'),
+        import('/shared/network.js'),
+        import('/shared/events.js')
+    ]);
+    workspaceShared.apiClient = apiClient;
+    workspaceShared.auth = auth;
+    workspaceShared.realtime = realtime;
+    workspaceShared.network = network;
+    workspaceShared.events = events;
+    return workspaceShared;
+})().catch((error) => {
+    console.error('Workspace shared bootstrap failed', error);
+    return workspaceShared;
+});
+
 // XSS prevention utility
 function escapeHtml(text) {
     if (!text) return '';
@@ -311,7 +338,7 @@ const pathParts = window.location.pathname.split('/').filter(Boolean);
 const workspaceIdentifier = pathParts[1]; // workspace ID
 const initialView = pathParts[2] || 'projects'; // default to projects
 const initialProjectId = pathParts[3] || null; // project ID for deep linking to editor
-const token = localStorage.getItem('token');
+let token = localStorage.getItem('token');
 const AUTH_RETURN_TO_KEY = 'auth_return_to';
 
 function sanitizeReturnToPath(path) {
@@ -339,6 +366,10 @@ function redirectToNotFound() {
 }
 
 if (!token) redirectToLoginWithReturnTo();
+
+function getWorkspaceToken() {
+    return workspaceShared.auth?.getAuthToken?.() || localStorage.getItem('token') || token || '';
+}
 
 // Valid views for URL routing
 const validViews = ['overview', 'projects', 'editor', 'licenses', 'access', 'logs', 'team', 'settings'];
@@ -377,6 +408,9 @@ let workspaceWsReconnectTimer = null;
 let workspaceWsShouldReconnect = true;
 let workspaceWsEndpoint = null;
 let workspaceWsReconnectDelayMs = 2000;
+let workspaceRealtimeChannel = null;
+let detachWorkspaceActionBindings = null;
+let workspaceActionScope = null;
 const realtimeRefreshTimers = new Map();
 let workspaceFetchWrapped = false;
 const PANEL_STATE_KEYS = {
@@ -386,6 +420,80 @@ const PANEL_STATE_KEYS = {
     detailsWidth: `workspace:${workspaceIdentifier}:detailsPanelWidth`
 };
 const TAB_HISTORY_LIMIT = 20;
+
+function getWorkspaceActionScope() {
+    if (workspaceActionScope) return workspaceActionScope;
+    workspaceActionScope = Object.create(window);
+
+    Object.defineProperty(workspaceActionScope, 'licenses', {
+        configurable: true,
+        get: () => licenses,
+        set: (value) => {
+            licenses = value;
+        }
+    });
+
+    Object.defineProperty(workspaceActionScope, 'accessRules', {
+        configurable: true,
+        get: () => accessRules,
+        set: (value) => {
+            accessRules = value;
+        }
+    });
+
+    Object.defineProperty(workspaceActionScope, 'logs', {
+        configurable: true,
+        get: () => logs,
+        set: (value) => {
+            logs = value;
+        }
+    });
+
+    return workspaceActionScope;
+}
+
+function installWorkspaceActionBindings() {
+    if (detachWorkspaceActionBindings) return;
+    const installActionAttributes = workspaceShared.events?.installActionAttributes;
+    if (typeof installActionAttributes !== 'function') return;
+
+    detachWorkspaceActionBindings = installActionAttributes({
+        root: document,
+        scope: getWorkspaceActionScope(),
+        onError: (error, statement) => {
+            console.warn('Workspace action ignored:', statement, error?.message || error);
+        }
+    });
+}
+
+function ensureWorkspaceRealtimeChannel() {
+    if (workspaceRealtimeChannel) return workspaceRealtimeChannel;
+    const createRealtimeChannel = workspaceShared.realtime?.createRealtimeChannel;
+    if (typeof createRealtimeChannel !== 'function') return null;
+
+    workspaceRealtimeChannel = createRealtimeChannel({
+        name: 'workspace',
+        getUrl: async () => {
+            const endpoint = await getWorkspaceWsEndpoint();
+            return buildWorkspaceWsUrl(endpoint);
+        },
+        onMessage: (message) => {
+            handleWorkspaceWsMessage(message);
+        },
+        onOpen: (socket) => {
+            workspaceWsReconnectDelayMs = 2000;
+            workspaceWs = socket;
+        },
+        onClose: () => {
+            workspaceWs = null;
+        },
+        onError: (error) => {
+            console.error('Workspace WebSocket error', error);
+        }
+    });
+
+    return workspaceRealtimeChannel;
+}
 
 function setWorkspaceNetworkBanner(visible, message) {
     const banner = document.getElementById('networkStatusBanner');
@@ -438,21 +546,30 @@ function toggleMobileSidebar() {
 function installWorkspaceFetchGuard() {
     if (workspaceFetchWrapped) return;
     workspaceFetchWrapped = true;
-    const nativeFetch = window.fetch.bind(window);
-    window.fetch = async (...args) => {
-        try {
-            const response = await nativeFetch(...args);
-            if (response.status >= 500) {
+    workspaceSharedReady.then(({ apiClient, auth }) => {
+        if (!apiClient?.installApiClient) return;
+        apiClient.installApiClient({
+            onUnauthorized: ({ path }) => {
+                if (path && (path.startsWith('/api/login') || path.startsWith('/api/register'))) return;
+                disconnectWorkspaceWebSocket({ allowReconnect: false });
+                token = '';
+                auth?.clearAuthSession?.({ clearPinTokens: true });
+                redirectToLoginWithReturnTo();
+            },
+            onForbidden: ({ path }) => {
+                if (!path || !path.startsWith('/api/')) return;
+                setWorkspaceNetworkBanner(true, 'Access denied for this workspace.');
+            },
+            onNetworkError: () => {
+                setWorkspaceNetworkBanner(true, 'Network error. Check your connection and retry.');
+            },
+            onServerError: () => {
                 setWorkspaceNetworkBanner(true, 'Server is busy right now. Retrying may help.');
-            } else {
-                setWorkspaceNetworkBanner(false);
             }
-            return response;
-        } catch (error) {
-            setWorkspaceNetworkBanner(true, 'Network error. Check your connection and retry.');
-            throw error;
-        }
-    };
+        });
+    }).catch((error) => {
+        console.error('Failed to install shared API client for workspace', error);
+    });
 }
 
 installWorkspaceFetchGuard();
@@ -474,18 +591,8 @@ function hasPermission(permission) {
 function handleAuthError() {
     disconnectWorkspaceWebSocket({ allowReconnect: false });
 
-    // Clear all auth-related localStorage items
-    localStorage.removeItem('token');
-
-    // Clear workspace-specific PIN tokens
-    const keysToRemove = [];
-    for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.startsWith('pin_token_') || key.startsWith('pin_token_expires_'))) {
-            keysToRemove.push(key);
-        }
-    }
-    keysToRemove.forEach(key => localStorage.removeItem(key));
+    token = '';
+    workspaceShared.auth?.clearAuthSession?.({ clearPinTokens: true });
 
     // Redirect to login and preserve current deep link.
     redirectToLoginWithReturnTo();
@@ -509,6 +616,12 @@ function debounce(func, wait, key) {
 }
 
 function scheduleRealtimeRefresh(key, callback, delay = 300) {
+    const channel = ensureWorkspaceRealtimeChannel();
+    if (channel) {
+        channel.queue(key, callback, delay);
+        return;
+    }
+
     const activeTimer = realtimeRefreshTimers.get(key);
     if (activeTimer) clearTimeout(activeTimer);
     const nextTimer = setTimeout(async () => {
@@ -635,7 +748,7 @@ async function getWorkspaceWsEndpoint() {
     workspaceWsEndpoint = '';
     try {
         const res = await fetch('/api/ws/config', {
-            headers: { 'Authorization': token }
+            headers: { 'Authorization': getWorkspaceToken() }
         });
         const data = await res.json();
         if (data?.success && data.endpoint) {
@@ -652,17 +765,29 @@ function buildWorkspaceWsUrl(endpoint) {
     if (!endpoint) return '';
     let normalized = String(endpoint).trim();
     if (!normalized) return '';
-    if (normalized.startsWith('https://')) normalized = `wss://${normalized.slice(8)}`;
-    if (normalized.startsWith('http://')) normalized = `ws://${normalized.slice(7)}`;
-    if (!/^wss?:\/\//i.test(normalized)) return '';
+    if (typeof workspaceShared.realtime?.normalizeWsEndpoint === 'function') {
+        normalized = workspaceShared.realtime.normalizeWsEndpoint(normalized);
+    } else {
+        if (normalized.startsWith('https://')) normalized = `wss://${normalized.slice(8)}`;
+        if (normalized.startsWith('http://')) normalized = `ws://${normalized.slice(7)}`;
+        if (!/^wss?:\/\//i.test(normalized)) return '';
+    }
+    if (!normalized) return '';
 
     const url = new URL(normalized);
     url.searchParams.set('path', `/api/ws/logs/${workspaceIdentifier}`);
-    url.searchParams.set('token', token);
+    url.searchParams.set('token', getWorkspaceToken());
     return url.toString();
 }
 
 function disconnectWorkspaceWebSocket({ allowReconnect = false } = {}) {
+    const channel = ensureWorkspaceRealtimeChannel();
+    if (channel) {
+        channel.disconnect({ allowReconnect });
+        workspaceWs = channel.socket;
+        return;
+    }
+
     workspaceWsShouldReconnect = allowReconnect;
     if (workspaceWsReconnectTimer) {
         clearTimeout(workspaceWsReconnectTimer);
@@ -680,6 +805,12 @@ function disconnectWorkspaceWebSocket({ allowReconnect = false } = {}) {
 }
 
 function scheduleWorkspaceWsReconnect() {
+    const channel = ensureWorkspaceRealtimeChannel();
+    if (channel) {
+        channel.scheduleReconnect();
+        return;
+    }
+
     if (!workspaceWsShouldReconnect || workspaceWsReconnectTimer) return;
     const delay = workspaceWsReconnectDelayMs;
     workspaceWsReconnectTimer = setTimeout(() => {
@@ -787,8 +918,15 @@ function handleWorkspaceWsMessage(raw) {
 }
 
 async function connectWorkspaceWebSocket() {
-    if (!workspaceIdentifier || !token) return;
+    if (!workspaceIdentifier || !getWorkspaceToken()) return;
     if (typeof checkPinRequired === 'function' && checkPinRequired()) return;
+
+    const channel = ensureWorkspaceRealtimeChannel();
+    if (channel) {
+        const socket = await channel.connect();
+        workspaceWs = socket;
+        return;
+    }
 
     if (workspaceWs && (workspaceWs.readyState === WebSocket.OPEN || workspaceWs.readyState === WebSocket.CONNECTING)) {
         return;
@@ -859,9 +997,9 @@ function renderLogsList() {
         return `
         <tr class="${rowClass}">
             <td class="px-6 py-4 text-gray-500 text-xs">${new Date(l.created_at).toLocaleString()}</td>
-            <td class="px-6 py-4 font-medium text-gray-300">${l.action}</td>
-            <td class="px-6 py-4 text-gray-400">${l.details || '-'}</td>
-            <td class="px-6 py-4 font-mono text-gray-400 text-xs">${l.ip || '-'}</td>
+            <td class="px-6 py-4 font-medium text-gray-300">${escapeHtml(l.action || '-')}</td>
+            <td class="px-6 py-4 text-gray-400">${escapeHtml(l.details || '-')}</td>
+            <td class="px-6 py-4 font-mono text-gray-400 text-xs">${escapeHtml(l.ip || '-')}</td>
         </tr>
     `}).join('');
 }
@@ -1092,7 +1230,7 @@ async function loadWorkspaceData() {
         console.log('[loadWorkspaceData] workspaceIdentifier:', workspaceIdentifier);
         console.log('[loadWorkspaceData] pinToken from localStorage:', pinToken ? 'exists (' + pinToken.substring(0, 8) + '...)' : 'missing');
 
-        const headers = { 'Authorization': token };
+        const headers = { 'Authorization': getWorkspaceToken() };
         if (pinToken) {
             headers['X-Pin-Token'] = pinToken;
         }
@@ -1476,16 +1614,16 @@ function renderFileList() {
         const activeTitle = isActive ? 'Active (Click to Disable)' : 'Disabled (Click to Enable)';
 
         return `
-        <div class="flex items-center justify-between px-3 py-2 rounded-md cursor-pointer text-sm text-gray-400 hover:bg-[#27272a] hover:text-white transition-colors ${s.secret_key === currentProjectKey ? 'bg-[#27272a] text-white' : ''}" onclick="selectFile('${s.secret_key}')">
+        <div class="flex items-center justify-between px-3 py-2 rounded-md cursor-pointer text-sm text-gray-400 hover:bg-[#27272a] hover:text-white transition-colors ${s.secret_key === currentProjectKey ? 'bg-[#27272a] text-white' : ''}" data-project-select="${escapeHtml(s.secret_key)}">
             <div class="flex items-center gap-2 truncate flex-1">
                 <i data-lucide="file" class="w-3 h-3"></i>
                 <span>${escapeHtml(s.name)}</span>
             </div>
             <div class="flex items-center gap-2">
-                <button onclick="event.stopPropagation(); toggleProjectActive('${s.secret_key}')" class="${activeClass} hover:text-white" title="${activeTitle}">
+                <button type="button" data-project-toggle="${escapeHtml(s.secret_key)}" class="${activeClass} hover:text-white" title="${activeTitle}">
                     <i data-lucide="power" class="w-3 h-3"></i>
                 </button>
-                <button onclick="event.stopPropagation(); deleteProject('${s.secret_key}')" class="text-red-500 hover:text-red-400" title="Delete Project">
+                <button type="button" data-project-delete="${escapeHtml(s.secret_key)}" class="text-red-500 hover:text-red-400" title="Delete Project">
                     <i data-lucide="trash-2" class="w-3 h-3"></i>
                 </button>
                 <div class="w-2 h-2 rounded-full ${statusColor.replace('text-', 'bg-')}" title="${s.status}"></div>
@@ -1511,7 +1649,7 @@ function renderProjectsGrid() {
                 </div>
                 <h3 class="text-lg font-medium text-white mb-2">No projects yet</h3>
                 <p class="text-gray-500 text-sm mb-6">Create your first project to get started</p>
-                <button onclick="openCreateProjectModal()" class="btn-primary text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
+                <button type="button" data-action="open-create-project" class="btn-primary text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
                     <i data-lucide="plus" class="w-4 h-4"></i> New Project
                 </button>
             </div>
@@ -1584,16 +1722,16 @@ function renderProjectsGrid() {
             
             <!-- Card Actions -->
             <div class="flex items-center gap-2 pt-3 border-t border-[#27272a]/50">
-                <button onclick="openProjectEditor('${s.secret_key}')" class="flex-1 flex items-center justify-center gap-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 py-2 rounded-lg text-xs font-medium transition-colors">
+                <button type="button" data-project-open-editor="${escapeHtml(s.secret_key)}" class="flex-1 flex items-center justify-center gap-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 py-2 rounded-lg text-xs font-medium transition-colors">
                     <i data-lucide="code-2" class="w-3.5 h-3.5"></i> Edit Code
                 </button>
-                <button onclick="event.stopPropagation(); toggleProjectActive('${s.secret_key}')" class="${isActive ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'bg-zinc-700/50 text-gray-400 hover:bg-zinc-700'} p-2 rounded-lg transition-colors" title="${isActive ? 'Disable' : 'Enable'}">
+                <button type="button" data-project-toggle="${escapeHtml(s.secret_key)}" class="${isActive ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'bg-zinc-700/50 text-gray-400 hover:bg-zinc-700'} p-2 rounded-lg transition-colors" title="${isActive ? 'Disable' : 'Enable'}">
                     <i data-lucide="power" class="w-4 h-4"></i>
                 </button>
-                <button onclick="openProjectSettingsModal('${s.secret_key}')" class="bg-zinc-700/50 hover:bg-zinc-700 text-gray-400 p-2 rounded-lg transition-colors" title="Settings">
+                <button type="button" data-project-settings="${escapeHtml(s.secret_key)}" class="bg-zinc-700/50 hover:bg-zinc-700 text-gray-400 p-2 rounded-lg transition-colors" title="Settings">
                     <i data-lucide="settings" class="w-4 h-4"></i>
                 </button>
-                <button onclick="event.stopPropagation(); deleteProject('${s.secret_key}')" class="bg-red-500/10 hover:bg-red-500/20 text-red-400 p-2 rounded-lg transition-colors" title="Delete">
+                <button type="button" data-project-delete="${escapeHtml(s.secret_key)}" class="bg-red-500/10 hover:bg-red-500/20 text-red-400 p-2 rounded-lg transition-colors" title="Delete">
                     <i data-lucide="trash-2" class="w-4 h-4"></i>
                 </button>
             </div>
@@ -1664,7 +1802,7 @@ async function toggleProjectActive(key) {
     try {
         const res = await fetch(`/api/projects/${key}/toggle-active`, {
             method: 'POST',
-            headers: { 'Authorization': token }
+            headers: { 'Authorization': getWorkspaceToken() }
         });
         const data = await res.json();
         if (data.success) {
@@ -1694,7 +1832,7 @@ async function deleteProject(key) {
         try {
             const res = await fetch(`/api/projects/${key}`, {
                 method: 'DELETE',
-                headers: { 'Authorization': token }
+                headers: { 'Authorization': getWorkspaceToken() }
             });
             const data = await res.json();
             if (data.success) {
@@ -1758,7 +1896,7 @@ async function setAsDefaultProject() {
     try {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/settings`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ default_project_id: script.id })
         });
         const data = await res.json();
@@ -1938,7 +2076,7 @@ async function toggleProjectRequireLicense() {
     try {
         const res = await fetch(`/api/projects/${currentProjectKey}/settings`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify(updatePayload)
         });
         const data = await res.json();
@@ -1984,7 +2122,7 @@ async function toggleProjectHwidLock() {
     try {
         const res = await fetch(`/api/projects/${currentProjectKey}/settings`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ require_hwid: newValue })
         });
         const data = await res.json();
@@ -2019,7 +2157,7 @@ async function toggleProjectIpWhitelist() {
     try {
         const res = await fetch(`/api/projects/${currentProjectKey}/settings`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ ip_whitelist_enabled: newValue })
         });
         const data = await res.json();
@@ -2045,7 +2183,7 @@ async function saveProjectMaxExec() {
     try {
         const res = await fetch(`/api/projects/${currentProjectKey}/settings`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ max_executions: value })
         });
         const data = await res.json();
@@ -2068,7 +2206,7 @@ async function saveProjectRateLimit() {
     try {
         const res = await fetch(`/api/projects/${currentProjectKey}/settings`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ rate_limit: value })
         });
         const data = await res.json();
@@ -2093,7 +2231,7 @@ async function resetProjectStats() {
         try {
             const res = await fetch(`/api/projects/${currentProjectKey}/reset-stats`, {
                 method: 'POST',
-                headers: { 'Authorization': token }
+                headers: { 'Authorization': getWorkspaceToken() }
             });
             const data = await res.json();
             if (data.success) {
@@ -2326,7 +2464,7 @@ async function saveCurrentFile() {
     try {
         const res = await fetch(`/api/projects/${currentProjectKey}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ content })
         });
         const data = await res.json();
@@ -2378,16 +2516,19 @@ async function createProject() {
     }
 
     // Prevent duplicate submissions
-    const createBtn = document.querySelector('#createProjectModal button[onclick="createProject()"]');
-    if (createBtn.disabled) return;
-    createBtn.disabled = true;
-    createBtn.textContent = 'Creating...';
+    const createBtn = document.querySelector('#createProjectModal [data-action="create-project-submit"]')
+        || document.querySelector('#createProjectModal [data-action-click*="createProject("]');
+    if (createBtn?.disabled) return;
+    if (createBtn) {
+        createBtn.disabled = true;
+        createBtn.textContent = 'Creating...';
+    }
 
     try {
         console.log('[createProject] Sending request...');
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/projects`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ name, content: '# New project' })
         });
         console.log('[createProject] Response status:', res.status);
@@ -2434,8 +2575,10 @@ async function createProject() {
         console.error('[createProject] ERROR:', e.message, e.stack);
         showToast('Error', 'Failed to create project: ' + e.message, 'error');
     } finally {
-        createBtn.disabled = false;
-        createBtn.textContent = 'Create';
+        if (createBtn) {
+            createBtn.disabled = false;
+            createBtn.textContent = 'Create';
+        }
     }
 }
 
@@ -2455,7 +2598,7 @@ async function loadLicenses(showLoading = true, forceReload = false) {
             tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-4 text-center text-gray-500">Loading...</td></tr>';
         }
         try {
-            const res = await fetch(`/api/workspaces/${workspaceIdentifier}/licenses`, { headers: { 'Authorization': token } });
+            const res = await fetch(`/api/workspaces/${workspaceIdentifier}/licenses`, { headers: { 'Authorization': getWorkspaceToken() } });
             const data = await res.json();
             if (data.success) {
                 licenses = data.licenses;
@@ -2511,7 +2654,7 @@ async function toggleHwidLock() {
     try {
         const res = await fetch(`/api/licenses/${currentLicenseId}/toggle-lock`, {
             method: 'POST',
-            headers: { 'Authorization': token }
+            headers: { 'Authorization': getWorkspaceToken() }
         });
         const data = await res.json();
         if (data.success) {
@@ -2535,7 +2678,7 @@ async function resetHwid() {
         try {
             const res = await fetch(`/api/licenses/${currentLicenseId}/reset-hwid`, {
                 method: 'POST',
-                headers: { 'Authorization': token }
+                headers: { 'Authorization': getWorkspaceToken() }
             });
             const data = await res.json();
             if (data.success) {
@@ -2591,7 +2734,7 @@ async function createLicense() {
 
             res = await fetch(`/api/workspaces/${workspaceIdentifier}/licenses`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': token },
+                headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
                 body: JSON.stringify({
                     note,
                     expiration_date: expiration,
@@ -2618,7 +2761,7 @@ async function createLicense() {
                 // Batch create
                 res = await fetch(`/api/workspaces/${workspaceIdentifier}/licenses/batch`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': token },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
                     body: JSON.stringify({
                         note,
                         expiration_date: expiration,
@@ -2646,7 +2789,7 @@ async function createLicense() {
                 // Single create
                 res = await fetch(`/api/workspaces/${workspaceIdentifier}/licenses`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': token },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
                     body: JSON.stringify({
                         note,
                         expiration_date: expiration,
@@ -2692,7 +2835,7 @@ async function deleteLicense(id) {
     showConfirm('Delete License', 'Are you sure you want to delete this license?', async (confirmed) => {
         if (!confirmed) return;
         try {
-            const res = await fetch(`/api/licenses/${id}`, { method: 'DELETE', headers: { 'Authorization': token } });
+            const res = await fetch(`/api/licenses/${id}`, { method: 'DELETE', headers: { 'Authorization': getWorkspaceToken() } });
             const data = await res.json();
             if (data.success) {
                 // Update local state immediately
@@ -2725,7 +2868,7 @@ async function loadAccessList(showLoading = true, forceReload = false) {
             tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-4 text-center text-gray-500">Loading...</td></tr>';
         }
         try {
-            const res = await fetch(`/api/workspaces/${workspaceIdentifier}/access-lists`, { headers: { 'Authorization': token } });
+            const res = await fetch(`/api/workspaces/${workspaceIdentifier}/access-lists`, { headers: { 'Authorization': getWorkspaceToken() } });
             const data = await res.json();
             if (data.success) {
                 accessRules = data.items;
@@ -2760,7 +2903,7 @@ function renderAccessList() {
             <td class="px-6 py-4 text-gray-400">${escapeHtml(i.note || '-')}</td>
             <td class="px-6 py-4 text-gray-500 text-xs">${new Date(i.created_at).toLocaleDateString()}</td>
             <td class="px-6 py-4 text-right">
-                <button onclick="deleteAccessRule(${i.id})" class="text-red-500 hover:text-red-400 text-xs font-medium">Delete</button>
+                <button type="button" data-access-delete="${escapeHtml(i.id)}" class="text-red-500 hover:text-red-400 text-xs font-medium">Delete</button>
             </td>
         </tr>
     `}).join('');
@@ -2776,7 +2919,7 @@ async function addAccessRule() {
     try {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/access-lists`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ type, identifier, note })
         });
         const data = await res.json();
@@ -2798,7 +2941,7 @@ async function deleteAccessRule(id) {
     showConfirm('Delete Rule', 'Are you sure you want to delete this access rule?', async (confirmed) => {
         if (!confirmed) return;
         try {
-            const res = await fetch(`/api/access-lists/${id}`, { method: 'DELETE', headers: { 'Authorization': token } });
+            const res = await fetch(`/api/access-lists/${id}`, { method: 'DELETE', headers: { 'Authorization': getWorkspaceToken() } });
             const data = await res.json();
             if (data.success) {
                 // Update local state immediately
@@ -2820,7 +2963,7 @@ async function loadLogs(showLoading = true, forceReload = false) {
             tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-4 text-center text-gray-500">Loading...</td></tr>';
         }
         try {
-            const res = await fetch(`/api/workspaces/${workspaceIdentifier}/logs`, { headers: { 'Authorization': token } });
+            const res = await fetch(`/api/workspaces/${workspaceIdentifier}/logs`, { headers: { 'Authorization': getWorkspaceToken() } });
             const data = await res.json();
             if (data.success) {
                 logs = data.logs;
@@ -2858,7 +3001,7 @@ async function saveSettings() {
     try {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/settings`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({
                 default_project_id: projectKey || null,
                 discord_webhook: webhook || null
@@ -2893,7 +3036,7 @@ async function deleteWorkspace() {
         try {
             const res = await fetch(`/api/workspaces/${workspaceIdentifier}`, {
                 method: 'DELETE',
-                headers: { 'Authorization': token }
+                headers: { 'Authorization': getWorkspaceToken() }
             });
             const data = await res.json();
             if (data.success) {
@@ -2915,7 +3058,7 @@ function copyToClipboard(text) {
 
 async function downloadWithAuth(url, fallbackFilename) {
     const res = await fetch(url, {
-        headers: { 'Authorization': token }
+        headers: { 'Authorization': getWorkspaceToken() }
     });
 
     if (!res.ok) {
@@ -3284,7 +3427,7 @@ function startInlineRename(div, node) {
                 if (!file) return;
                 const res = await fetch(`/api/projects/${file.project_id}/files/${node.id}/rename`, {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': token },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
                     body: JSON.stringify({ name: newName })
                 });
                 const data = await res.json();
@@ -3452,7 +3595,7 @@ async function loadFileTree(projectId, options = {}) {
 
     try {
         const res = await fetch(`/api/projects/${projectId}/files`, {
-            headers: { 'Authorization': token }
+            headers: { 'Authorization': getWorkspaceToken() }
         });
         const data = await res.json();
         if (data.success) {
@@ -3511,7 +3654,7 @@ async function openFileInTab(fileId, fileName) {
             if (!file) return;
             const projectId = file.project_id;
             const res = await fetch(`/api/projects/${projectId}/files/${normalizedFileId}/content`, {
-                headers: { 'Authorization': token }
+                headers: { 'Authorization': getWorkspaceToken() }
             });
             const data = await res.json();
             if (data.success) {
@@ -3878,7 +4021,7 @@ async function saveFileById(fileId, options = {}) {
     try {
         const res = await fetch(`/api/projects/${file.project_id}/files/${normalizedFileId}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ content })
         });
         const data = await res.json();
@@ -3911,7 +4054,7 @@ async function createNewFile(parentId = null) {
         try {
             const res = await fetch(`/api/projects/${project.id}/files`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': token },
+                headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
                 body: JSON.stringify({ name, type: 'file', parent_id: parentId, content: '' })
             });
             const data = await res.json();
@@ -3941,7 +4084,7 @@ async function createNewFolder(parentId = null) {
         try {
             const res = await fetch(`/api/projects/${project.id}/files`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': token },
+                headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
                 body: JSON.stringify({ name, type: 'folder', parent_id: parentId })
             });
             const data = await res.json();
@@ -3980,7 +4123,7 @@ async function deleteFileItem(fileId) {
         try {
             const res = await fetch(`/api/projects/${file.project_id}/files/${fileId}`, {
                 method: 'DELETE',
-                headers: { 'Authorization': token }
+                headers: { 'Authorization': getWorkspaceToken() }
             });
             const data = await res.json();
             if (data.success) {
@@ -4014,7 +4157,7 @@ async function renameFileItem(fileId) {
         try {
             const res = await fetch(`/api/projects/${file.project_id}/files/${fileId}/rename`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json', 'Authorization': token },
+                headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
                 body: JSON.stringify({ name: newName })
             });
             const data = await res.json();
@@ -4044,7 +4187,7 @@ async function moveFileToFolder(fileId, targetFolderId) {
     try {
         const res = await fetch(`/api/projects/${file.project_id}/files/${fileId}/move`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ parent_id: targetFolderId })
         });
         const data = await res.json();
@@ -4068,7 +4211,7 @@ async function setEntryPoint(fileId) {
     try {
         const res = await fetch(`/api/projects/${file.project_id}/files/${fileId}/entry-point`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ is_entry_point: true })
         });
         const data = await res.json();
@@ -4105,7 +4248,7 @@ async function uploadFile() {
                 try {
                     const res = await fetch(`/api/projects/${project.id}/files/upload`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': token },
+                        headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
                         body: JSON.stringify({
                             files: [{ name: file.name, content, encoding: 'text' }]
                         })
@@ -4151,7 +4294,7 @@ function showContextMenu(x, y, node) {
             if (!file) return;
             fetch(`/api/projects/${file.project_id}/files/${node.id}/copy`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': token },
+                headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
                 body: JSON.stringify({})
             }).then(r => r.json()).then(data => {
                 if (data.success) {
@@ -4459,7 +4602,7 @@ async function searchAcrossFiles() {
 
         const res = await fetch(`/api/projects/${project.id}/files/search`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ query, case_sensitive: caseSensitive, regex: useRegex })
         });
         const data = await res.json();
@@ -4660,12 +4803,14 @@ function showToast(title, message, type = 'info', duration = 3000) {
             <div class="toast-title">${escapeHtml(title)}</div>
             <div class="toast-message">${escapeHtml(message)}</div>
         </div>
-        <button class="toast-close" onclick="this.parentElement.remove()">
+        <button type="button" class="toast-close" data-toast-close>
             <i data-lucide="x" class="w-4 h-4"></i>
         </button>
     `;
 
     container.appendChild(toast);
+    const closeBtn = toast.querySelector('[data-toast-close]');
+    closeBtn?.addEventListener('click', () => toast.remove());
     lucide.createIcons();
 
     // Auto remove
@@ -4793,7 +4938,7 @@ async function renameProject() {
     try {
         const res = await fetch(`/api/projects/${key}/rename`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ name: newName })
         });
         const data = await res.json();
@@ -4829,7 +4974,7 @@ async function duplicateCurrentProject() {
     try {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/projects`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ name: newName, content: script.content })
         });
         const data = await res.json();
@@ -4933,11 +5078,11 @@ function renderLicenseList() {
 
         return `
         <tr class="hover:bg-[#27272a] transition-colors ${isSelected ? 'bg-indigo-500/5' : ''}">
-            <td class="px-4 py-4"><input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleLicenseSelection(${l.id})"></td>
+            <td class="px-4 py-4"><input type="checkbox" ${isSelected ? 'checked' : ''} data-license-select="${escapeHtml(l.id)}"></td>
             <td class="px-4 py-4">
                 <div class="flex items-center gap-2">
                     <code class="text-gray-300 text-xs">${escapeHtml(l.key)}</code>
-                    <button onclick="copyToClipboard('${escapeHtml(l.key)}')" class="text-gray-500 hover:text-gray-300" title="Copy">
+                    <button type="button" data-copy-text="${escapeHtml(l.key)}" class="text-gray-500 hover:text-gray-300" title="Copy">
                         <i data-lucide="copy" class="w-3 h-3"></i>
                     </button>
                 </div>
@@ -4949,17 +5094,17 @@ function renderLicenseList() {
                 <div class="text-gray-500">Used: ${usage}x</div>
             </td>
             <td class="px-4 py-4">
-                <button onclick="toggleLicenseStatus(${l.id})" class="px-2 py-1 rounded text-xs font-medium ${statusClass} hover:opacity-80 transition-opacity">
+                <button type="button" data-license-toggle="${escapeHtml(l.id)}" class="px-2 py-1 rounded text-xs font-medium ${statusClass} hover:opacity-80 transition-opacity">
                     ${l.is_active ? 'Active' : 'Inactive'}
                 </button>
             </td>
             <td class="px-4 py-4 text-gray-400 text-xs">${lastUsed}</td>
             <td class="px-4 py-4 text-right">
                 <div class="flex justify-end gap-1">
-                    <button onclick="openLicenseInfo(${l.id})" class="action-btn p-1.5" title="View Details">
+                    <button type="button" data-license-info="${escapeHtml(l.id)}" class="action-btn p-1.5" title="View Details">
                         <i data-lucide="info" class="w-3.5 h-3.5"></i>
                     </button>
-                    <button onclick="deleteLicense(${l.id})" class="action-btn danger p-1.5" title="Delete">
+                    <button type="button" data-license-delete="${escapeHtml(l.id)}" class="action-btn danger p-1.5" title="Delete">
                         <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                     </button>
                 </div>
@@ -5054,7 +5199,7 @@ async function bulkToggleLicenses() {
             try {
                 const res = await fetch(`/api/licenses/${id}/toggle`, {
                     method: 'POST',
-                    headers: { 'Authorization': token }
+                    headers: { 'Authorization': getWorkspaceToken() }
                 });
                 const data = await res.json();
                 if (data.success) {
@@ -5082,7 +5227,7 @@ async function bulkDeleteLicenses() {
             try {
                 const res = await fetch(`/api/licenses/${id}`, {
                     method: 'DELETE',
-                    headers: { 'Authorization': token }
+                    headers: { 'Authorization': getWorkspaceToken() }
                 });
                 const data = await res.json();
                 if (data.success) {
@@ -5102,7 +5247,7 @@ async function toggleLicenseStatus(id) {
     try {
         const res = await fetch(`/api/licenses/${id}/toggle`, {
             method: 'POST',
-            headers: { 'Authorization': token }
+            headers: { 'Authorization': getWorkspaceToken() }
         });
         const data = await res.json();
         if (data.success) {
@@ -5255,7 +5400,7 @@ async function clearAllLogs() {
         try {
             const res = await fetch(`/api/workspaces/${workspaceIdentifier}/logs`, {
                 method: 'DELETE',
-                headers: { 'Authorization': token }
+                headers: { 'Authorization': getWorkspaceToken() }
             });
             const data = await res.json();
             if (data.success) {
@@ -5328,7 +5473,7 @@ function renderFilteredAccess() {
             <td class="px-6 py-4">
                 <div class="flex items-center gap-2">
                     <code class="text-gray-300 text-sm">${escapeHtml(i.identifier)}</code>
-                    <button onclick="copyToClipboard('${escapeHtml(i.identifier)}')" class="text-gray-500 hover:text-gray-300">
+                    <button type="button" data-copy-text="${escapeHtml(i.identifier)}" class="text-gray-500 hover:text-gray-300">
                         <i data-lucide="copy" class="w-3 h-3"></i>
                     </button>
                 </div>
@@ -5336,7 +5481,7 @@ function renderFilteredAccess() {
             <td class="px-6 py-4 text-gray-400">${escapeHtml(i.note || '-')}</td>
             <td class="px-6 py-4 text-gray-500 text-xs">${new Date(i.created_at).toLocaleDateString()}</td>
             <td class="px-6 py-4 text-right">
-                <button onclick="deleteAccessRule(${i.id})" class="action-btn danger p-1.5" title="Delete">
+                <button type="button" data-access-delete="${escapeHtml(i.id)}" class="action-btn danger p-1.5" title="Delete">
                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                 </button>
             </td>
@@ -5402,7 +5547,7 @@ async function refreshAccess() {
 async function loadTeam() {
     try {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/team`, {
-            headers: { 'Authorization': token }
+            headers: { 'Authorization': getWorkspaceToken() }
         });
         const data = await res.json();
 
@@ -5485,12 +5630,12 @@ function renderTeamMemberRow(member, isOwner, canManage) {
             </div>
             ${!isOwner && canManage ? `
                 <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <select onchange="changeRole(${member.id}, this.value)" class="bg-[#18181b] border border-[#27272a] rounded px-2 py-1 text-xs text-gray-300">
+                    <select data-team-role-change="${escapeHtml(member.id)}" class="bg-[#18181b] border border-[#27272a] rounded px-2 py-1 text-xs text-gray-300">
                         <option value="viewer" ${role === 'viewer' ? 'selected' : ''}>Viewer</option>
                         <option value="editor" ${role === 'editor' ? 'selected' : ''}>Editor</option>
                         <option value="admin" ${role === 'admin' ? 'selected' : ''}>Admin</option>
                     </select>
-                    <button onclick="removeMember(${member.id}, '${displayName}')" class="p-1.5 text-gray-500 hover:text-red-400 transition-colors" title="Remove member">
+                    <button type="button" data-team-remove="${escapeHtml(member.id)}" data-team-name="${escapeHtml(displayName)}" class="p-1.5 text-gray-500 hover:text-red-400 transition-colors" title="Remove member">
                         <i data-lucide="user-minus" class="w-4 h-4"></i>
                     </button>
                 </div>
@@ -5534,7 +5679,7 @@ async function sendInvite() {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/team/invite`, {
             method: 'POST',
             headers: {
-                'Authorization': token,
+                'Authorization': getWorkspaceToken(),
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ email, role })
@@ -5579,7 +5724,7 @@ async function changeRole(memberId, newRole) {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/team/${memberId}`, {
             method: 'PUT',
             headers: {
-                'Authorization': token,
+                'Authorization': getWorkspaceToken(),
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ role: newRole })
@@ -5607,7 +5752,7 @@ async function removeMember(memberId, name) {
         try {
             const res = await fetch(`/api/workspaces/${workspaceIdentifier}/team/${memberId}`, {
                 method: 'DELETE',
-                headers: { 'Authorization': token }
+                headers: { 'Authorization': getWorkspaceToken() }
             });
 
             const data = await res.json();
@@ -5628,7 +5773,7 @@ async function cancelInvite(inviteId) {
     try {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/invitations/${inviteId}`, {
             method: 'DELETE',
-            headers: { 'Authorization': token }
+            headers: { 'Authorization': getWorkspaceToken() }
         });
 
         const data = await res.json();
@@ -5713,7 +5858,7 @@ function applyRolePermissions() {
     // VIEWER: Can only view and see logs
     if (currentUserRole === 'viewer') {
         // Disable all editing in sidebar
-        disableElement('[onclick="openCreateProjectModal()"]', 'Viewers cannot create projects');
+        disableElement('[data-action-click="openCreateProjectModal()"], [data-action="open-create-project"]', 'Viewers cannot create projects');
 
         // Disable editor buttons (save, format, duplicate, rename, delete)
         disableElement('#view-editor .flex.gap-2 button', 'Viewers cannot edit projects');
@@ -5730,11 +5875,11 @@ function applyRolePermissions() {
         }, 100);
 
         // Disable license actions
-        disableElement('[onclick="openCreateLicenseModal()"]', 'Viewers cannot create licenses');
-        disableElement('[onclick="exportLicenses()"]', 'Viewers cannot export licenses');
+        disableElement('[data-action-click="openCreateLicenseModal()"]', 'Viewers cannot create licenses');
+        disableElement('[data-action-click="exportLicenses()"]', 'Viewers cannot export licenses');
 
         // Disable access control actions
-        disableElement('[onclick="openAddAccessModal()"]', 'Viewers cannot add access rules');
+        disableElement('[data-action-click="openAddAccessModal()"]', 'Viewers cannot add access rules');
 
         // Disable team management (already handled in renderTeam)
         disableElement('#inviteBtn', 'Viewers cannot invite members');
@@ -5745,14 +5890,14 @@ function applyRolePermissions() {
         disableElement('#view-settings button', 'Viewers cannot change settings');
 
         // Disable log actions (clear, export)
-        disableElement('[onclick="clearAllLogs()"]', 'Viewers cannot clear logs');
+        disableElement('[data-action-click="clearAllLogs()"]', 'Viewers cannot clear logs');
     }
 
     // EDITOR: Can edit scripts and manage licenses, but not access/team/settings
     if (currentUserRole === 'editor') {
         // Disable access control actions
-        disableElement('[onclick="openAddAccessModal()"]', 'Editors cannot manage access rules');
-        disableElement('#view-access button:not([onclick*="refresh"])', 'Editors cannot manage access rules');
+        disableElement('[data-action-click="openAddAccessModal()"]', 'Editors cannot manage access rules');
+        disableElement('#view-access button:not([data-action-click*="loadAccessList"])', 'Editors cannot manage access rules');
 
         // Disable team management
         disableElement('#inviteBtn', 'Editors cannot invite members');
@@ -5760,16 +5905,16 @@ function applyRolePermissions() {
         // Disable workspace settings (except viewing)
         disableElement('#view-settings input', 'Editors cannot change workspace settings');
         disableElement('#view-settings select', 'Editors cannot change workspace settings');
-        disableElement('#view-settings button:not([onclick*="copy"])', 'Editors cannot change workspace settings');
+        disableElement('#view-settings button:not([data-action-click*="copyToClipboard"])', 'Editors cannot change workspace settings');
 
         // Disable delete workspace
-        disableElement('[onclick*="deleteWorkspace"]', 'Editors cannot delete workspace');
+        disableElement('[data-action-click*="deleteWorkspace"]', 'Editors cannot delete workspace');
     }
 
     // ADMIN: Can do most things except critical owner actions
     if (currentUserRole === 'admin') {
         // Disable delete workspace
-        disableElement('[onclick*="deleteWorkspace"]', 'Only owner can delete workspace');
+        disableElement('[data-action-click*="deleteWorkspace"]', 'Only owner can delete workspace');
 
         // Disable changing critical workspace settings (if any)
         disableElement('#dangerZone', 'Only owner can access danger zone');
@@ -5930,7 +6075,7 @@ async function savePin() {
     try {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/pin`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ pin })
         });
         const data = await res.json();
@@ -5959,7 +6104,7 @@ async function removePin() {
         try {
             const res = await fetch(`/api/workspaces/${workspaceIdentifier}/pin`, {
                 method: 'DELETE',
-                headers: { 'Authorization': token }
+                headers: { 'Authorization': getWorkspaceToken() }
             });
             const data = await res.json();
 
@@ -6025,7 +6170,7 @@ async function submitPinVerification() {
     try {
         const res = await fetch(`/api/workspaces/${workspaceIdentifier}/pin/verify`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            headers: { 'Content-Type': 'application/json', 'Authorization': getWorkspaceToken() },
             body: JSON.stringify({ pin })
         });
         const data = await res.json();
@@ -6209,8 +6354,17 @@ function initPrivacyMode() {
 
 // Initialize privacy mode on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
+    workspaceSharedReady.then(() => {
+        installWorkspaceActionBindings();
+    }).catch(() => {});
+    installWorkspaceActionBindings();
     installWorkspaceFetchGuard();
     initPrivacyMode();
+
+    const legacyCreateButton = document.querySelector('#createProjectModal [data-action-click*="createProject("]');
+    if (legacyCreateButton && !legacyCreateButton.dataset.action) {
+        legacyCreateButton.dataset.action = 'create-project-submit';
+    }
 
     const retryButton = document.getElementById('networkRetryButton');
     if (retryButton) {
@@ -6247,6 +6401,107 @@ document.addEventListener('DOMContentLoaded', () => {
             modal.style.display = 'none';
         });
     });
+
+    document.addEventListener('click', (event) => {
+        const toggleBtn = event.target.closest('[data-project-toggle]');
+        if (toggleBtn) {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleProjectActive(toggleBtn.getAttribute('data-project-toggle'));
+            return;
+        }
+
+        const deleteBtn = event.target.closest('[data-project-delete]');
+        if (deleteBtn) {
+            event.preventDefault();
+            event.stopPropagation();
+            deleteProject(deleteBtn.getAttribute('data-project-delete'));
+            return;
+        }
+
+        const openEditorBtn = event.target.closest('[data-project-open-editor]');
+        if (openEditorBtn) {
+            event.preventDefault();
+            openProjectEditor(openEditorBtn.getAttribute('data-project-open-editor'));
+            return;
+        }
+
+        const projectSettingsBtn = event.target.closest('[data-project-settings]');
+        if (projectSettingsBtn) {
+            event.preventDefault();
+            openProjectSettingsModal(projectSettingsBtn.getAttribute('data-project-settings'));
+            return;
+        }
+
+        const selectProject = event.target.closest('[data-project-select]');
+        if (selectProject) {
+            event.preventDefault();
+            selectFile(selectProject.getAttribute('data-project-select'));
+            return;
+        }
+
+        const openCreateProjectBtn = event.target.closest('[data-action="open-create-project"]');
+        if (openCreateProjectBtn) {
+            event.preventDefault();
+            openCreateProjectModal();
+            return;
+        }
+
+        const accessDeleteBtn = event.target.closest('[data-access-delete]');
+        if (accessDeleteBtn) {
+            event.preventDefault();
+            deleteAccessRule(accessDeleteBtn.getAttribute('data-access-delete'));
+            return;
+        }
+
+        const copyBtn = event.target.closest('[data-copy-text]');
+        if (copyBtn) {
+            event.preventDefault();
+            copyToClipboard(copyBtn.getAttribute('data-copy-text') || '');
+            return;
+        }
+
+        const licenseToggleBtn = event.target.closest('[data-license-toggle]');
+        if (licenseToggleBtn) {
+            event.preventDefault();
+            toggleLicenseStatus(licenseToggleBtn.getAttribute('data-license-toggle'));
+            return;
+        }
+
+        const licenseInfoBtn = event.target.closest('[data-license-info]');
+        if (licenseInfoBtn) {
+            event.preventDefault();
+            openLicenseInfo(licenseInfoBtn.getAttribute('data-license-info'));
+            return;
+        }
+
+        const licenseDeleteBtn = event.target.closest('[data-license-delete]');
+        if (licenseDeleteBtn) {
+            event.preventDefault();
+            deleteLicense(licenseDeleteBtn.getAttribute('data-license-delete'));
+            return;
+        }
+
+        const teamRemoveBtn = event.target.closest('[data-team-remove]');
+        if (teamRemoveBtn) {
+            event.preventDefault();
+            removeMember(teamRemoveBtn.getAttribute('data-team-remove'), teamRemoveBtn.getAttribute('data-team-name') || 'member');
+            return;
+        }
+    });
+
+    document.addEventListener('change', (event) => {
+        const licenseCheckbox = event.target.closest('[data-license-select]');
+        if (licenseCheckbox) {
+            toggleLicenseSelection(licenseCheckbox.getAttribute('data-license-select'));
+            return;
+        }
+
+        const teamRoleSelect = event.target.closest('[data-team-role-change]');
+        if (teamRoleSelect) {
+            changeRole(teamRoleSelect.getAttribute('data-team-role-change'), teamRoleSelect.value);
+        }
+    });
 });
 
 window.addEventListener('beforeunload', (event) => {
@@ -6257,3 +6512,4 @@ window.addEventListener('beforeunload', (event) => {
 
     disconnectWorkspaceWebSocket({ allowReconnect: false });
 });
+

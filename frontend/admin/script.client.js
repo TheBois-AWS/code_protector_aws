@@ -1,5 +1,32 @@
 const ADMIN_AUTH_RETURN_KEY = 'auth_return_to';
 
+const adminShared = {
+  apiClient: null,
+  auth: null,
+  realtime: null,
+  network: null,
+  events: null
+};
+
+const adminSharedReady = (async () => {
+  const [apiClient, auth, realtime, network, events] = await Promise.all([
+    import('/shared/api-client.js'),
+    import('/shared/auth.js'),
+    import('/shared/realtime.js'),
+    import('/shared/network.js'),
+    import('/shared/events.js')
+  ]);
+  adminShared.apiClient = apiClient;
+  adminShared.auth = auth;
+  adminShared.realtime = realtime;
+  adminShared.network = network;
+  adminShared.events = events;
+  return adminShared;
+})().catch((error) => {
+  console.error('Admin shared bootstrap failed', error);
+  return adminShared;
+});
+
 const adminState = {
   profile: window.__ADMIN_PROFILE__ || null,
   token: window.__ADMIN_TOKEN__ || localStorage.getItem('token') || '',
@@ -34,6 +61,47 @@ const adminState = {
     guardToken: ''
   }
 };
+
+let adminRealtimeChannel = null;
+let detachAdminActionBindings = null;
+
+function getSafeToken() {
+  return adminShared.auth?.getAuthToken?.() || adminState.token || localStorage.getItem('token') || '';
+}
+
+function ensureAdminRealtimeChannel() {
+  if (adminRealtimeChannel) return adminRealtimeChannel;
+  const createRealtimeChannel = adminShared.realtime?.createRealtimeChannel;
+  if (typeof createRealtimeChannel !== 'function') return null;
+
+  adminRealtimeChannel = createRealtimeChannel({
+    name: 'admin',
+    getUrl: async () => {
+      const endpoint = await getAdminWsEndpoint();
+      return buildAdminWsUrl(endpoint);
+    },
+    onMessage: (message) => {
+      handleAdminWsMessage(message);
+    },
+    onOpen: (socket) => {
+      adminState.ws = socket;
+      const hadPreviousConnection = adminState.wsConnectedOnce;
+      adminState.wsConnectedOnce = true;
+      adminState.wsReconnectDelay = 2000;
+      if (hadPreviousConnection) {
+        queueRealtimeRefresh(['overview', 'aws', 'users', 'workspaces', 'audit']);
+      }
+    },
+    onClose: () => {
+      adminState.ws = null;
+    },
+    onError: (error) => {
+      console.error('Admin WebSocket error', error);
+    }
+  });
+
+  return adminRealtimeChannel;
+}
 
 function escapeHtml(text) {
   if (text === null || text === undefined) return '';
@@ -109,10 +177,6 @@ function showToast(title, message, type = 'info') {
     toast.classList.add('translate-x-full');
     setTimeout(() => toast.remove(), 260);
   }, 3500);
-}
-
-function getSafeToken() {
-  return adminState.token || localStorage.getItem('token') || '';
 }
 
 function apiHeaders(extra = {}, withJson = false) {
@@ -257,7 +321,8 @@ function toggleMobileSidebar() {
 
 function logout() {
   disconnectAdminWebSocket(false);
-  localStorage.removeItem('token');
+  adminState.token = '';
+  adminShared.auth?.clearAuthSession?.();
   localStorage.removeItem(ADMIN_AUTH_RETURN_KEY);
   window.location.replace('/login');
 }
@@ -265,20 +330,42 @@ function logout() {
 function installFetchGuard() {
   if (adminState.fetchWrapped) return;
   adminState.fetchWrapped = true;
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = async (...args) => {
-    try {
-      const response = await nativeFetch(...args);
-      setNetworkBanner(response.status >= 500, response.status >= 500 ? 'Server is busy right now. Retrying may help.' : null);
-      return response;
-    } catch (error) {
-      setNetworkBanner(true, 'Network error. Check your connection and retry.');
-      throw error;
-    }
-  };
+  adminSharedReady.then(({ apiClient, auth }) => {
+    if (!apiClient?.installApiClient) return;
+    apiClient.installApiClient({
+      onUnauthorized: ({ path }) => {
+        if (path && (path.startsWith('/api/login') || path.startsWith('/api/register'))) return;
+        disconnectAdminWebSocket(false);
+        adminState.token = '';
+        auth?.clearAuthSession?.();
+        localStorage.removeItem(ADMIN_AUTH_RETURN_KEY);
+        window.location.replace('/login?returnTo=' + encodeURIComponent(window.location.pathname + window.location.search + window.location.hash));
+      },
+      onForbidden: ({ path }) => {
+        if (path && path.startsWith('/api/admin/')) {
+          setNetworkBanner(true, 'Access denied. You no longer have admin access.');
+        }
+      },
+      onNetworkError: () => {
+        setNetworkBanner(true, 'Network error. Check your connection and retry.');
+      },
+      onServerError: () => {
+        setNetworkBanner(true, 'Server is busy right now. Retrying may help.');
+      }
+    });
+  }).catch((error) => {
+    console.error('Failed to install shared API client for admin', error);
+  });
 }
 
 function disconnectAdminWebSocket(allowReconnect = false) {
+  const channel = ensureAdminRealtimeChannel();
+  if (channel) {
+    channel.disconnect({ allowReconnect });
+    adminState.ws = channel.socket;
+    return;
+  }
+
   adminState.wsShouldReconnect = allowReconnect;
   if (adminState.wsReconnectTimer) {
     clearTimeout(adminState.wsReconnectTimer);
@@ -294,6 +381,12 @@ function disconnectAdminWebSocket(allowReconnect = false) {
 }
 
 function scheduleAdminWsReconnect() {
+  const channel = ensureAdminRealtimeChannel();
+  if (channel) {
+    channel.scheduleReconnect();
+    return;
+  }
+
   if (!adminState.wsShouldReconnect || adminState.wsReconnectTimer) return;
   const delay = adminState.wsReconnectDelay;
   adminState.wsReconnectTimer = setTimeout(() => {
@@ -321,9 +414,14 @@ function buildAdminWsUrl(endpoint) {
   if (!endpoint) return '';
   let normalized = String(endpoint).trim();
   if (!normalized) return '';
-  if (normalized.startsWith('https://')) normalized = `wss://${normalized.slice(8)}`;
-  if (normalized.startsWith('http://')) normalized = `ws://${normalized.slice(7)}`;
-  if (!/^wss?:\/\//i.test(normalized)) return '';
+  if (typeof adminShared.realtime?.normalizeWsEndpoint === 'function') {
+    normalized = adminShared.realtime.normalizeWsEndpoint(normalized);
+  } else {
+    if (normalized.startsWith('https://')) normalized = `wss://${normalized.slice(8)}`;
+    if (normalized.startsWith('http://')) normalized = `ws://${normalized.slice(7)}`;
+    if (!/^wss?:\/\//i.test(normalized)) return '';
+  }
+  if (!normalized) return '';
   const url = new URL(normalized);
   url.searchParams.set('path', '/api/ws/admin');
   url.searchParams.set('channel', 'admin');
@@ -1350,7 +1448,15 @@ function queueRealtimeRefresh(panels = []) {
       adminState.wsRealtimeTargets.add(normalized);
     }
   }
-  if (!adminState.wsRealtimeTargets.size || adminState.wsRealtimeTimer) return;
+  if (!adminState.wsRealtimeTargets.size) return;
+
+  const channel = ensureAdminRealtimeChannel();
+  if (channel) {
+    channel.queue('admin-realtime-refresh', flushRealtimeRefreshQueue, 300);
+    return;
+  }
+
+  if (adminState.wsRealtimeTimer) return;
   adminState.wsRealtimeTimer = setTimeout(() => {
     adminState.wsRealtimeTimer = null;
     flushRealtimeRefreshQueue();
@@ -1441,6 +1547,13 @@ function handleAdminWsMessage(raw) {
 
 async function connectAdminWebSocket() {
   if (!getSafeToken()) return;
+  const channel = ensureAdminRealtimeChannel();
+  if (channel) {
+    const socket = await channel.connect();
+    adminState.ws = socket;
+    return;
+  }
+
   if (adminState.ws && (adminState.ws.readyState === WebSocket.OPEN || adminState.ws.readyState === WebSocket.CONNECTING)) return;
   const endpoint = await getAdminWsEndpoint();
   const wsUrl = buildAdminWsUrl(endpoint);
@@ -1464,7 +1577,25 @@ async function connectAdminWebSocket() {
   socket.onerror = (error) => console.error('Admin WebSocket error', error);
 }
 
+function installAdminActionBindings() {
+  if (detachAdminActionBindings) return;
+  const installActionAttributes = adminShared.events?.installActionAttributes;
+  if (typeof installActionAttributes !== 'function') return;
+
+  detachAdminActionBindings = installActionAttributes({
+    root: document,
+    scope: window,
+    onError: (error, statement) => {
+      console.warn('Admin action ignored:', statement, error?.message || error);
+    }
+  });
+}
+
 function bindEvents() {
+  adminSharedReady.then(() => {
+    installAdminActionBindings();
+  }).catch(() => {});
+  installAdminActionBindings();
   document.getElementById('logoutButton')?.addEventListener('click', logout);
   document.getElementById('mobileSidebarToggle')?.addEventListener('click', toggleMobileSidebar);
   document.getElementById('mobileSidebarBackdrop')?.addEventListener('click', closeMobileSidebar);
