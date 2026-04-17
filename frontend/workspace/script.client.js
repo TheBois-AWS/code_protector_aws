@@ -9,6 +9,10 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function toInlineJsString(value) {
+    return JSON.stringify(String(value ?? '')).replace(/"/g, '&quot;');
+}
+
 const MONACO_THEME_DARK = 'guardscript-dark';
 const MONACO_THEME_LIGHT = 'guardscript-light';
 let monacoThemesRegistered = false;
@@ -2760,7 +2764,7 @@ function renderAccessList() {
             <td class="px-6 py-4 text-gray-400">${escapeHtml(i.note || '-')}</td>
             <td class="px-6 py-4 text-gray-500 text-xs">${new Date(i.created_at).toLocaleDateString()}</td>
             <td class="px-6 py-4 text-right">
-                <button onclick="deleteAccessRule(${i.id})" class="text-red-500 hover:text-red-400 text-xs font-medium">Delete</button>
+                <button onclick="deleteAccessRule(${toInlineJsString(i.id)})" class="text-red-500 hover:text-red-400 text-xs font-medium">Delete</button>
             </td>
         </tr>
     `}).join('');
@@ -4933,11 +4937,11 @@ function renderLicenseList() {
 
         return `
         <tr class="hover:bg-[#27272a] transition-colors ${isSelected ? 'bg-indigo-500/5' : ''}">
-            <td class="px-4 py-4"><input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleLicenseSelection(${l.id})"></td>
+            <td class="px-4 py-4"><input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleLicenseSelection(${toInlineJsString(l.id)})"></td>
             <td class="px-4 py-4">
                 <div class="flex items-center gap-2">
                     <code class="text-gray-300 text-xs">${escapeHtml(l.key)}</code>
-                    <button onclick="copyToClipboard('${escapeHtml(l.key)}')" class="text-gray-500 hover:text-gray-300" title="Copy">
+                    <button onclick="copyToClipboard(${toInlineJsString(l.key)})" class="text-gray-500 hover:text-gray-300" title="Copy">
                         <i data-lucide="copy" class="w-3 h-3"></i>
                     </button>
                 </div>
@@ -4949,17 +4953,17 @@ function renderLicenseList() {
                 <div class="text-gray-500">Used: ${usage}x</div>
             </td>
             <td class="px-4 py-4">
-                <button onclick="toggleLicenseStatus(${l.id})" class="px-2 py-1 rounded text-xs font-medium ${statusClass} hover:opacity-80 transition-opacity">
+                <button onclick="toggleLicenseStatus(${toInlineJsString(l.id)})" class="px-2 py-1 rounded text-xs font-medium ${statusClass} hover:opacity-80 transition-opacity">
                     ${l.is_active ? 'Active' : 'Inactive'}
                 </button>
             </td>
             <td class="px-4 py-4 text-gray-400 text-xs">${lastUsed}</td>
             <td class="px-4 py-4 text-right">
                 <div class="flex justify-end gap-1">
-                    <button onclick="openLicenseInfo(${l.id})" class="action-btn p-1.5" title="View Details">
+                    <button onclick="openLicenseInfo(${toInlineJsString(l.id)})" class="action-btn p-1.5" title="View Details">
                         <i data-lucide="info" class="w-3.5 h-3.5"></i>
                     </button>
-                    <button onclick="deleteLicense(${l.id})" class="action-btn danger p-1.5" title="Delete">
+                    <button onclick="deleteLicense(${toInlineJsString(l.id)})" class="action-btn danger p-1.5" title="Delete">
                         <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                     </button>
                 </div>
@@ -5328,7 +5332,7 @@ function renderFilteredAccess() {
             <td class="px-6 py-4">
                 <div class="flex items-center gap-2">
                     <code class="text-gray-300 text-sm">${escapeHtml(i.identifier)}</code>
-                    <button onclick="copyToClipboard('${escapeHtml(i.identifier)}')" class="text-gray-500 hover:text-gray-300">
+                    <button onclick="copyToClipboard(${toInlineJsString(i.identifier)})" class="text-gray-500 hover:text-gray-300">
                         <i data-lucide="copy" class="w-3 h-3"></i>
                     </button>
                 </div>
@@ -5336,7 +5340,7 @@ function renderFilteredAccess() {
             <td class="px-6 py-4 text-gray-400">${escapeHtml(i.note || '-')}</td>
             <td class="px-6 py-4 text-gray-500 text-xs">${new Date(i.created_at).toLocaleDateString()}</td>
             <td class="px-6 py-4 text-right">
-                <button onclick="deleteAccessRule(${i.id})" class="action-btn danger p-1.5" title="Delete">
+                <button onclick="deleteAccessRule(${toInlineJsString(i.id)})" class="action-btn danger p-1.5" title="Delete">
                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                 </button>
             </td>
@@ -5485,12 +5489,12 @@ function renderTeamMemberRow(member, isOwner, canManage) {
             </div>
             ${!isOwner && canManage ? `
                 <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <select onchange="changeRole(${member.id}, this.value)" class="bg-[#18181b] border border-[#27272a] rounded px-2 py-1 text-xs text-gray-300">
+                    <select onchange="changeRole(${toInlineJsString(member.id)}, this.value)" class="bg-[#18181b] border border-[#27272a] rounded px-2 py-1 text-xs text-gray-300">
                         <option value="viewer" ${role === 'viewer' ? 'selected' : ''}>Viewer</option>
                         <option value="editor" ${role === 'editor' ? 'selected' : ''}>Editor</option>
                         <option value="admin" ${role === 'admin' ? 'selected' : ''}>Admin</option>
                     </select>
-                    <button onclick="removeMember(${member.id}, '${displayName}')" class="p-1.5 text-gray-500 hover:text-red-400 transition-colors" title="Remove member">
+                    <button onclick="removeMember(${toInlineJsString(member.id)}, ${toInlineJsString(displayName)})" class="p-1.5 text-gray-500 hover:text-red-400 transition-colors" title="Remove member">
                         <i data-lucide="user-minus" class="w-4 h-4"></i>
                     </button>
                 </div>

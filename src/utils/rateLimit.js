@@ -1,28 +1,45 @@
 import { rateLimitsRepo } from '../services/repositories.js';
 import { unixNow } from './common.js';
 
-export async function checkRateLimit(key, windowSeconds, max) {
-  const now = unixNow();
-  const windowStart = now - (now % windowSeconds);
-  const current = await rateLimitsRepo.get(key);
+let hasWarnedAboutRateLimitStore = false;
 
-  if (!current || Number(current.window_start) !== windowStart) {
-    await rateLimitsRepo.set(key, {
-      key,
-      window_start: windowStart,
-      count: 1,
-      expires_at: now + Math.max(windowSeconds, 3600)
+function allowWhenRateLimitStoreFails(error) {
+  if (!hasWarnedAboutRateLimitStore) {
+    hasWarnedAboutRateLimitStore = true;
+    console.warn('Rate limit storage is unavailable; continuing without enforcing rate limits until it recovers.', {
+      name: error?.name || 'Error',
+      message: error?.message || String(error || '')
     });
+  }
+  return { allowed: true, retryAfterSeconds: 0, degraded: true };
+}
+
+export async function checkRateLimit(key, windowSeconds, max) {
+  try {
+    const now = unixNow();
+    const windowStart = now - (now % windowSeconds);
+    const current = await rateLimitsRepo.get(key);
+
+    if (!current || Number(current.window_start) !== windowStart) {
+      await rateLimitsRepo.set(key, {
+        key,
+        window_start: windowStart,
+        count: 1,
+        expires_at: now + Math.max(windowSeconds, 3600)
+      });
+      return { allowed: true, retryAfterSeconds: 0 };
+    }
+
+    const count = Number(current.count || 0);
+    if (count >= max) {
+      return { allowed: false, retryAfterSeconds: Math.max(1, windowSeconds - (now - windowStart)) };
+    }
+
+    await rateLimitsRepo.increment(key, windowStart, now + Math.max(windowSeconds, 3600));
     return { allowed: true, retryAfterSeconds: 0 };
+  } catch (error) {
+    return allowWhenRateLimitStoreFails(error);
   }
-
-  const count = Number(current.count || 0);
-  if (count >= max) {
-    return { allowed: false, retryAfterSeconds: Math.max(1, windowSeconds - (now - windowStart)) };
-  }
-
-  await rateLimitsRepo.increment(key, windowStart, now + Math.max(windowSeconds, 3600));
-  return { allowed: true, retryAfterSeconds: 0 };
 }
 
 export function buildRateLimitKey(scope, request, extra = '') {
