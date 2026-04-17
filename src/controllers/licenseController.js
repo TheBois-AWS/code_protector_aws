@@ -12,6 +12,27 @@ function randomLicenseKey(prefix = '', suffix = '') {
   return `${prefix}LIC-${crypto.randomUUID().split('-')[0].toUpperCase()}-${crypto.randomUUID().split('-')[1].toUpperCase()}${suffix}`;
 }
 
+function buildLicenseRecord(workspaceId, payload, key, projectId) {
+  return {
+    id: randomId(),
+    workspace_id: workspaceId,
+    key,
+    note: payload.note ? String(payload.note) : null,
+    expiration_date: payload.expiration_date || null,
+    ...(projectId ? {
+      script_id: projectId,
+      project_id: projectId
+    } : {}),
+    is_active: 1,
+    hwid_lock: 1,
+    activated_hwid: null,
+    activated_os: null,
+    last_used_at: null,
+    usage_count: 0,
+    created_at: nowIso()
+  };
+}
+
 async function resolveProjectId(workspaceId, input) {
   if (!input) return null;
   const projects = await projectsRepo.listByWorkspace(String(workspaceId));
@@ -52,22 +73,7 @@ export async function createLicense(request, workspaceIdentifier) {
   const existing = await licensesRepo.findByKey(key);
   if (existing) return jsonResponse(400, { success: false, error: 'This license key already exists' });
 
-  const license = await licensesRepo.create({
-    id: randomId(),
-    workspace_id: workspace.id,
-    key,
-    note: payload.note ? String(payload.note) : null,
-    expiration_date: payload.expiration_date || null,
-    script_id: projectId,
-    project_id: projectId,
-    is_active: 1,
-    hwid_lock: 1,
-    activated_hwid: null,
-    activated_os: null,
-    last_used_at: null,
-    usage_count: 0,
-    created_at: nowIso()
-  });
+  const license = await licensesRepo.create(buildLicenseRecord(workspace.id, payload, key, projectId));
 
   await logAction(workspace.id, 'CREATE_LICENSE', `Created license ${license.key} for project ${projectId || 'ALL'}`, request);
   await broadcastWorkspaceEvent(workspace.id, 'LICENSE_UPDATE', { action: 'create', license });
@@ -96,22 +102,7 @@ export async function batchCreateLicenses(request, workspaceIdentifier) {
   for (let index = 0; index < count; index += 1) {
     let key = randomLicenseKey(String(payload.prefix || ''), String(payload.suffix || ''));
     while (await licensesRepo.findByKey(key)) key = randomLicenseKey(String(payload.prefix || ''), String(payload.suffix || ''));
-    const license = await licensesRepo.create({
-      id: randomId(),
-      workspace_id: workspace.id,
-      key,
-      note: payload.note ? String(payload.note) : null,
-      expiration_date: payload.expiration_date || null,
-      script_id: projectId,
-      project_id: projectId,
-      is_active: 1,
-      hwid_lock: 1,
-      activated_hwid: null,
-      activated_os: null,
-      last_used_at: null,
-      usage_count: 0,
-      created_at: nowIso()
-    });
+    const license = await licensesRepo.create(buildLicenseRecord(workspace.id, payload, key, projectId));
     licenses.push(license);
   }
 
