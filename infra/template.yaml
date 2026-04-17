@@ -79,6 +79,9 @@ Parameters:
     AllowedValues:
       - 'true'
       - 'false'
+  CloudWatchAlarmEmail:
+    Type: String
+    Default: ''
 
 Conditions:
   HasFrontendBucketName: !Not [!Equals [!Ref FrontendBucketName, '']]
@@ -92,6 +95,10 @@ Conditions:
     - !Condition HasCloudFrontAcmCertificateArn
   CreateApiFunctionLogGroup: !Equals [!Ref ManageApiLogGroup, 'true']
   HasCloudWatchAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
+  HasCloudWatchAlarmEmail: !Not [!Equals [!Ref CloudWatchAlarmEmail, '']]
+  HasCloudWatchAlarmNotifications: !And
+    - !Condition HasCloudWatchAlarms
+    - !Condition HasCloudWatchAlarmEmail
 
 Resources:
   FrontendBucket:
@@ -309,6 +316,37 @@ Resources:
           API_ORIGIN_VERIFY_HEADER: x-origin-verify
           WS_API_ENDPOINT: !Sub 'https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
 
+  CloudWatchAlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasCloudWatchAlarmNotifications
+    Properties:
+      TopicName: !Sub '${ProjectName}-${Stage}-cloudwatch-alerts'
+      DisplayName: !Sub '${ProjectName}-${Stage} CloudWatch Alerts'
+
+  CloudWatchAlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: HasCloudWatchAlarmNotifications
+    Properties:
+      Topics:
+        - !Ref CloudWatchAlarmTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudWatchPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref CloudWatchAlarmTopic
+
+  CloudWatchAlarmSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasCloudWatchAlarmNotifications
+    Properties:
+      TopicArn: !Ref CloudWatchAlarmTopic
+      Protocol: email
+      Endpoint: !Ref CloudWatchAlarmEmail
+
   ApiFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Condition: CreateApiFunctionLogGroup
@@ -335,6 +373,14 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasCloudWatchAlarmNotifications
+        - [!Ref CloudWatchAlarmTopic]
+        - !Ref AWS::NoValue
+      OKActions: !If
+        - HasCloudWatchAlarmNotifications
+        - [!Ref CloudWatchAlarmTopic]
+        - !Ref AWS::NoValue
 
   ApiThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -353,6 +399,14 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasCloudWatchAlarmNotifications
+        - [!Ref CloudWatchAlarmTopic]
+        - !Ref AWS::NoValue
+      OKActions: !If
+        - HasCloudWatchAlarmNotifications
+        - [!Ref CloudWatchAlarmTopic]
+        - !Ref AWS::NoValue
 
   ApiDurationP95Alarm:
     Type: AWS::CloudWatch::Alarm
@@ -371,6 +425,14 @@ Resources:
       Threshold: 5000
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasCloudWatchAlarmNotifications
+        - [!Ref CloudWatchAlarmTopic]
+        - !Ref AWS::NoValue
+      OKActions: !If
+        - HasCloudWatchAlarmNotifications
+        - [!Ref CloudWatchAlarmTopic]
+        - !Ref AWS::NoValue
 
   ApiDashboard:
     Type: AWS::CloudWatch::Dashboard
@@ -1191,3 +1253,9 @@ Outputs:
     Value: !Ref WebSocketConnectionsTable
   AdminAuditTableName:
     Value: !Ref AdminAuditTable
+  CloudWatchAlarmEmail:
+    Condition: HasCloudWatchAlarmEmail
+    Value: !Ref CloudWatchAlarmEmail
+  CloudWatchAlarmTopicArn:
+    Condition: HasCloudWatchAlarmNotifications
+    Value: !Ref CloudWatchAlarmTopic

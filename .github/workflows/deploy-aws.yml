@@ -55,6 +55,7 @@ jobs:
       LAMBDA_LOG_RETENTION_DAYS: ${{ vars.LAMBDA_LOG_RETENTION_DAYS || '30' }}
       MANAGE_API_LOG_GROUP: ${{ vars.MANAGE_API_LOG_GROUP || 'false' }}
       ENABLE_CLOUDWATCH_ALARMS: ${{ vars.ENABLE_CLOUDWATCH_ALARMS || 'true' }}
+      CLOUDWATCH_ALARM_EMAIL: ${{ vars.CLOUDWATCH_ALARM_EMAIL || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -190,6 +191,10 @@ jobs:
             "EnableCloudWatchAlarms=${ENABLE_CLOUDWATCH_ALARMS}"
             "ApiOriginVerifySecret=${{ steps.resolve_origin_lock.outputs.origin_verify_secret }}"
           )
+
+          if [ -n "${CLOUDWATCH_ALARM_EMAIL}" ]; then
+            PARAMS+=("CloudWatchAlarmEmail=${CLOUDWATCH_ALARM_EMAIL}")
+          fi
 
           if [ -n "${FRONTEND_BUCKET_NAME}" ]; then
             PARAMS+=("FrontendBucketName=${FRONTEND_BUCKET_NAME}")
